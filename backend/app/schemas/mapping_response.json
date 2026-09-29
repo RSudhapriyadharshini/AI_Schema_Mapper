@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "mappings", "unmapped_fields", "ambiguous_fields"],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "mappings": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "unmapped_fields": {"type": "array", "items": {"$ref": "#/$defs/item"}},
+    "ambiguous_fields": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_field", "source_value", "target_field", "target_value", "confidence", "status", "reason", "owner", "etl_can_populate"],
+      "properties": {
+        "source_field": {"type": "string"},
+        "source_value": {"type": "string"},
+        "target_field": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "target_value": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "confidence": {"type": "number"},
+        "status": {"type": "string", "enum": ["mapped", "unmapped", "ambiguous"]},
+        "reason": {"type": "string"},
+        "owner": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "etl_can_populate": {"type": "boolean"}
+      }
+    }
+  }
+}

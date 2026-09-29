@@ -1,0 +1,70 @@
+[
+  {
+    "agent_name": "Alice Smith",
+    "mobile_no": "+1 555 123 4567",
+    "email_address": "alice@example.com",
+    "brokerage": "ABC Realty",
+    "job_title": "Senior Loan Officer",
+    "about_me": "Alice has worked in mortgage lending for 8 years.",
+    "areas_served": "Austin, Round Rock",
+    "linkedin_url": "https://linkedin.com/in/alice",
+    "years_experience": "8",
+    "license_no": "TX-LO-123456"
+  },
+  {
+    "agentName": "Bob Johnson",
+    "phone": "+1 555 987 6543",
+    "email": "bob@example.com",
+    "company_name": "XYZ Properties",
+    "title": "Mortgage Advisor",
+    "description": "Bob helps homeowners find mortgage solutions.",
+    "service_area": "Dallas",
+    "linkedin": "https://linkedin.com/in/bobjohnson",
+    "homepage": "https://bobjohnson-mortgage.example.com",
+    "specialties": "FHA loans, VA loans, first-time buyers",
+    "favorite_color": "teal"
+  },
+  {
+    "representative": "Carol Diaz",
+    "telephone": "(972) 555-0142",
+    "e_mail": "carol.diaz@example.com",
+    "agency": "Lone Star Lending",
+    "position": "Loan Originator",
+    "bio": "Carol guides first-time buyers through every step of financing a home.",
+    "office_location": "123 Main St, Plano, TX 75024",
+    "experience": "12 years",
+    "contact": "John Smith"
+  },
+  {
+    "rep_name": "Daniel Okafor",
+    "contact_phone": "(214) 555-0199",
+    "mail": "dokafor@example.com",
+    "broker": "Heritage Home Loans",
+    "profile_description": "Daniel specializes in jumbo and refinance loans for growing families.",
+    "services": "Jumbo loans; Refinance; Home equity",
+    "photo": "https://images.example.com/headshots/dokafor.jpg",
+    "experience": "15+ years"
+  },
+  {
+    "fullName": "Eve Martinez",
+    "phone_number": "+1 713 555 0111",
+    "email_address": "eve.martinez@example.com",
+    "organization": "Gulf Coast Mortgage",
+    "professional_summary": "Eve is a mortgage banker focused on veterans and military families.",
+    "location": "Houston, TX",
+    "linkedin": "https://www.linkedin.com/in/evemartinez",
+    "internal_id": "A-9931"
+  },
+  {
+    "given_name": "Frank",
+    "surname": "Nguyen",
+    "mobile": "+1 469 555 0177",
+    "work_email": "frank.nguyen@example.com",
+    "company": "Prairie Financial",
+    "role": "Branch Manager",
+    "about": "Frank leads a team of loan officers serving North Texas.",
+    "license_number": "NMLS-778899",
+    "areas": "Frisco, McKinney, Allen",
+    "website": "https://frank-nguyen.example.com"
+  }
+]

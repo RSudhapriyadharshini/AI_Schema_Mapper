@@ -1,0 +1,6 @@
+[
+  {"source_field": "agent_name", "target_field": "profile.full_name", "example_value": "Alice Smith"},
+  {"source_field": "mobile_no", "target_field": "profile.phone", "example_value": "+1 555 123 4567"},
+  {"source_field": "brokerage", "target_field": "profile.company", "example_value": "ABC Realty"},
+  {"source_field": "about_me", "target_field": "profile.bio", "example_value": "Alice has worked in mortgage lending for 8 years."}
+]
