@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, ApiError } from "../services/api";
-import type { CanonicalSchema, Health, Run, Step, Upload } from "../types";
+import type { CanonicalSchema, Health, MappingMode, Run, Step, Upload } from "../types";
 
 interface Ctx {
   health: Health | null;
@@ -15,7 +15,7 @@ interface Ctx {
   activeRun: Run | null;
   starting: boolean;
   startError: string | null;
-  startRun: (useExamples: boolean) => Promise<void>;
+  startRun: (useExamples: boolean, mode: MappingMode) => Promise<void>;
   version: number;
   bump: () => void;
 }
@@ -96,11 +96,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void tick();
   }, [refreshRuns, bump]);
 
-  const startRun = async (useExamples: boolean) => {
+  const startRun = async (useExamples: boolean, mode: MappingMode) => {
     if (!upload) return;
     setStarting(true); setStartError(null);
     try {
-      const { run_id } = await api.startRun(upload.id, useExamples);
+      const { run_id } = await api.startRun(upload.id, useExamples, mode);
       setActiveSteps(null); setActiveRun(null);
       poll(run_id);
     } catch (e) {

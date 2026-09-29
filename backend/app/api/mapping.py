@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from .. import config
 from ..services import database as db
-from ..services import pipeline
+from ..services import pipeline, sources
 from ..services.coverage import build_canonical, schema_index
 from ..services.errors import MappingError
 from ..services.validator import coerce_value, usable
@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api")
 class RunRequest(BaseModel):
     upload_id: int
     use_approved_examples: bool = True
+    mapping_mode: str = "per_source"  # per_source | per_source_relearn | per_record
 
 
 @router.post("/runs")
@@ -23,7 +24,7 @@ def create_run(req: RunRequest):
     if not config.api_key_configured():
         raise HTTPException(400, {"code": "MISSING_API_KEY", "message": "ANTHROPIC_API_KEY is not set. Add it to .env and restart the backend."})
     try:
-        return {"run_id": pipeline.start_run(req.upload_id, req.use_approved_examples)}
+        return {"run_id": pipeline.start_run(req.upload_id, req.use_approved_examples, req.mapping_mode)}
     except MappingError as e:
         raise HTTPException(404 if e.code == "NOT_FOUND" else 400, {"code": e.code, "message": e.message})
 
@@ -37,13 +38,13 @@ def run_view(r: dict) -> dict:
 @router.get("/runs")
 def list_runs():
     with db.conn() as c:
-        return [run_view(r) for r in db.rows(c, "SELECT * FROM mapping_runs ORDER BY id DESC")]
+        return [run_view(r) for r in db.rows(c, db.RUN_SELECT + " ORDER BY r.id DESC")]
 
 
 @router.get("/runs/{run_id}/status")
 def run_status(run_id: int):
     with db.conn() as c:
-        run = db.one(c, "SELECT * FROM mapping_runs WHERE id=?", (run_id,))
+        run = db.one(c, db.RUN_SELECT + " WHERE r.id=?", (run_id,))
         if not run:
             raise HTTPException(404, "Run not found.")
         steps = db.rows(c, "SELECT step_key, label, status, detail, started_at, finished_at FROM run_steps WHERE run_id=? ORDER BY position", (run_id,))
@@ -80,6 +81,8 @@ def review(mapping_id: int, body: Review):
         if body.action == "skip":
             c.execute("UPDATE field_mappings SET review_state='skipped' WHERE id=?", (mapping_id,))
             return {"ok": True}
+        raw = json.loads(db.one(c, "SELECT raw_json FROM source_records WHERE id=?", (m["record_id"],))["raw_json"])
+        sig, new_target = sources.signature(raw), None
         if body.action == "reject":
             c.execute("UPDATE field_mappings SET status='unmapped', target_field=NULL, target_value=NULL, owner=NULL, etl_can_populate=0, review_state='rejected' WHERE id=?", (mapping_id,))
         else:
@@ -94,10 +97,26 @@ def review(mapping_id: int, body: Review):
             c.execute("""UPDATE field_mappings SET status='mapped', target_field=?, target_value=?, owner=?, etl_can_populate=?,
                          review_state='approved' WHERE id=?""",
                       (tf, str(value).strip(), schema[tf]["owner"], int("crawler" in schema[tf]["source_priority"]), mapping_id))
+            new_target = tf
             c.execute("INSERT OR REPLACE INTO approved_mappings(source_field, target_field, example_value, created_at) VALUES (?,?,?,?)",
                       (m["source_field"], tf, m["source_value"], db.now()))
         rebuild_canonical(c, m["mapping_run_id"], m["record_id"])
         db.refresh_run_counts(c, m["mapping_run_id"])
+    # carry the decision into the saved source mapping so later runs reuse it
+    sources.update_after_review(sig, m["source_field"], m["target_field"], body.action, new_target, m["confidence"] or 0.0, schema)
+    return {"ok": True}
+
+
+# ---- saved source mappings ---------------------------------------------------
+
+@router.get("/source-mappings")
+def source_mappings():
+    return sources.list_saved()
+
+
+@router.delete("/source-mappings/{source_id}")
+def delete_source_mapping(source_id: int):
+    sources.delete_saved(source_id)
     return {"ok": True}
 
 

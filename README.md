@@ -31,6 +31,7 @@ Copy `.env.example` to `.env` in the project root and set:
 | `ANTHROPIC_API_KEY` | required, never committed |
 | `ANTHROPIC_MODEL` | optional, default `claude-opus-5-5` |
 | `ANTHROPIC_EFFORT` | optional, default `medium` (blank to omit; needed for models without effort support) |
+| `ANTHROPIC_NORMALIZE_MODEL` | optional, model for the small value-derivation requests (defaults to `ANTHROPIC_MODEL`) |
 | `MAPPER_CONCURRENCY` | optional, parallel Claude calls, default 4 |
 | `LLM_TIMEOUT_SECONDS` | optional, default 180 |
 
@@ -79,7 +80,7 @@ SQLite at `backend/data/draft.db` (git-ignored). Required tables: `mapping_runs`
 
 For each source record, one Claude call receives: the canonical schema (name, description, type, required, owner,
 source priority), optional human-approved examples (context only), and the full record. The system prompt is in
-`backend/app/prompts/schema_mapping.txt`. Output is constrained with Structured Outputs (`output_config.format`
+`backend/app/prompts/{schema_mapping,normalize_values}.txt`. Output is constrained with Structured Outputs (`output_config.format`
 JSON schema) whose `target_field` is an enum of the canonical fields, so Claude cannot invent one.
 
 Validation (`services/validator.py`) then checks: JSON shape, every source field accounted for, target in schema,
@@ -94,6 +95,28 @@ Confidence is **LLM-reported**, not a calibrated probability. Bands (configurabl
 Manual review: approve (choose a canonical field), reject or skip ambiguous/unmapped fields. Approved mappings are stored and
 sent to Claude as examples on later runs; Claude still makes the decision.
 
+## Cost control: map once per source
+
+Records from the same website share the same field names. Instead of asking Claude about every record, the
+app groups records by their **field-name signature** and runs in one of three modes (dropdown on the run panel):
+
+| Mode | What Claude is asked | Cost |
+|---|---|---|
+| **Map once per source** (default) | Maps one sample record per source. The decision is saved and reused for the other records, and for later runs of the same source. | lowest |
+| Map once per source, re-learn | Same, but ignores saved mappings and decides again (use after changing the model, prompt or schema). | low |
+| Map every record | The original behaviour: one full mapping request per record. Use it as a quality/cost baseline. | highest |
+
+How reuse works without hard-coding meaning: Claude's decision (source field, target field, status, confidence, reason)
+is stored per source. Fields whose value passes through unchanged are simply copied. Fields that need transforming
+(full name to first/last name, "12 years" to 12, splitting an address) go to Claude in **one small batched request per source**
+that carries only those values, not the whole schema. Every reused mapping shows its origin, is type-checked, and is still
+subject to the confidence thresholds. Human review decisions are written back into the saved mapping, so a corrected
+mapping is reused next time. Saved mappings are keyed to the schema and prompt version and are ignored when either changes.
+Records with a different set of field names count as a different source and are mapped separately.
+
+The run panel shows how many Claude requests and tokens a run used. `ANTHROPIC_NORMALIZE_MODEL` optionally sets a cheaper
+model for the small value-derivation requests.
+
 ## How coverage is calculated
 
 * **Field coverage** = canonical fields with a usable value in ≥ 1 profile ÷ all canonical fields.
@@ -107,10 +130,10 @@ sent to Claude as examples on later runs; Claude still makes the decision.
 ```
 backend/app/{main.py, config.py}
 backend/app/api/{upload,mapping,records,schema}.py
-backend/app/services/{parser,llm_mapper,validator,coverage,pipeline,database,errors}.py
-backend/app/prompts/schema_mapping.txt
+backend/app/services/{parser,llm_mapper,validator,coverage,pipeline,sources,database,errors}.py
+backend/app/prompts/{schema_mapping,normalize_values}.txt
 backend/app/schemas/{canonical_schema,mapping_response}.json
-backend/tests/test_pipeline.py     # offline tests using a STUB Claude client (test-only)
+backend/tests/test_pipeline.py, test_per_source.py  # offline tests using a STUB Claude client (test-only)
 frontend/src/{App.tsx, pages/, components/, services/api.ts}
 sample_data/{sample_crawler_data.json, approved_examples_seed.json}
 ```

@@ -18,6 +18,7 @@ export interface Run {
   prompt_version: string; source_file: string; status: "running" | "completed" | "failed";
   records_processed: number; total_records: number; fields_mapped: number; fields_unmapped: number; fields_ambiguous: number;
   crawler_version: string; extraction_prompt_version: string; thresholds: Thresholds; error_type: string | null; error_message: string | null;
+  mapping_mode: string | null; llm_requests: number; input_tokens: number; output_tokens: number;
 }
 export interface Step { step_key: string; label: string; status: "pending" | "running" | "done" | "failed"; detail: string | null }
 
@@ -25,7 +26,7 @@ export interface Mapping {
   id: number; record_index: number; source_field: string; source_value: string; target_field: string | null;
   target_value: string | null; confidence: number; status: "mapped" | "unmapped" | "ambiguous"; owner: Owner | null;
   etl_can_populate: boolean; reason: string; llm_status: string; review_state: string | null;
-  validation_note: string | null; band: string | null;
+  validation_note: string | null; band: string | null; origin: string | null;
 }
 
 export interface FieldCoverage {
@@ -49,9 +50,17 @@ export interface CanonicalRecord {
   id: number; record_index: number; profile: Record<string, string | number>; lineage: Record<string, Lineage>; raw: Record<string, unknown>;
 }
 export interface LlmCall {
-  id: number; record_index: number; attempt: number; model: string; prompt_version: string; status: string;
+  id: number; record_index: number; purpose: string | null; attempt: number; model: string; prompt_version: string; status: string;
   error: string | null; request_text: string; response_text: string | null; stop_reason: string | null;
   input_tokens: number | null; output_tokens: number | null; latency_ms: number | null; created_at: string;
 }
 export interface ApprovedExample { id: number; source_field: string; target_field: string; example_value: string | null }
 export interface Health { ok: boolean; api_key_configured: boolean; model: string; prompt_version: string }
+export interface SourceDecision {
+  source_field: string; target_field: string | null; status: string; confidence: number; derived: boolean; human_approved?: boolean;
+}
+export interface SourceMapping {
+  id: number; signature: string; fields: string[]; decisions: SourceDecision[]; model: string; schema_version: string;
+  created_run_id: number; updated_at: string; times_reused: number;
+}
+export type MappingMode = "per_source" | "per_source_relearn" | "per_record";

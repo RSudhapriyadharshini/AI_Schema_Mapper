@@ -47,6 +47,7 @@ export default function Dashboard() {
           <Stat label="Ambiguous fields" value={m.fields_ambiguous} tone={m.fields_ambiguous ? "amber" : "slate"} sub={m.fields_ambiguous ? "⚠ review on AI Mapping tab" : undefined} />
           <Stat label="ETL coverage" value={pct(m.etl_coverage)} tone="indigo" sub={`${m.etl_owned_populated} of ${m.etl_owned_total} ETL-owned fields`} />
           <Stat label="Profile completeness" value={pct(m.profile_completeness)} tone="indigo" sub="avg. across profiles" />
+          <Stat label="Claude requests" value={run?.llm_requests ?? 0} sub={`for ${m.profiles} records`} />
         </div>
       ) : cov.error ? <ErrorBox>{cov.error}</ErrorBox>
         : <Empty>No completed mapping run yet. Load the sample crawler data and click <b>Run AI Schema Mapping</b>.</Empty>}

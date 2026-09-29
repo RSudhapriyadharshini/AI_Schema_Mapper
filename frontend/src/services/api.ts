@@ -1,5 +1,5 @@
 import type {
-  ApprovedExample, CanonicalRecord, CanonicalSchema, Coverage, Health, LlmCall, Mapping, Run, Step, Thresholds, Upload,
+  ApprovedExample, CanonicalRecord, MappingMode, SourceMapping, CanonicalSchema, Coverage, Health, LlmCall, Mapping, Run, Step, Thresholds, Upload,
 } from "../types";
 
 export class ApiError extends Error {
@@ -37,8 +37,10 @@ export const api = {
   loadSample: () => req<Upload>("/upload/sample", { method: "POST" }),
   getUpload: (id: number) => req<Upload>(`/uploads/${id}`),
   listUploads: () => req<{ id: number }[]>("/uploads"),
-  startRun: (upload_id: number, use_approved_examples: boolean) =>
-    req<{ run_id: number }>("/runs", json("POST", { upload_id, use_approved_examples })),
+  startRun: (upload_id: number, use_approved_examples: boolean, mapping_mode: MappingMode) =>
+    req<{ run_id: number }>("/runs", json("POST", { upload_id, use_approved_examples, mapping_mode })),
+  sourceMappings: () => req<SourceMapping[]>("/source-mappings"),
+  deleteSourceMapping: (id: number) => req<{ ok: boolean }>(`/source-mappings/${id}`, { method: "DELETE" }),
   runs: () => req<Run[]>("/runs"),
   runStatus: (id: number) => req<{ run: Run; steps: Step[] }>(`/runs/${id}/status`),
   mappings: (id: number) => req<{ run: Run; mappings: Mapping[] }>(`/runs/${id}/mappings`),

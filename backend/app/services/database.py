@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS mapping_runs (
   thresholds_json TEXT,
   use_examples INTEGER NOT NULL DEFAULT 1,
   error_type TEXT,
-  error_message TEXT
+  error_message TEXT,
+  mapping_mode TEXT
 );
 CREATE TABLE IF NOT EXISTS run_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +78,8 @@ CREATE TABLE IF NOT EXISTS field_mappings (
   created_at TEXT NOT NULL,
   llm_status TEXT,
   review_state TEXT,
-  validation_note TEXT
+  validation_note TEXT,
+  origin TEXT
 );
 CREATE TABLE IF NOT EXISTS canonical_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,6 +92,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   run_id INTEGER NOT NULL,
   record_index INTEGER NOT NULL,
+  purpose TEXT,
   attempt INTEGER NOT NULL,
   model TEXT,
   prompt_version TEXT,
@@ -111,8 +114,30 @@ CREATE TABLE IF NOT EXISTS approved_mappings (
   created_at TEXT NOT NULL,
   UNIQUE(source_field, target_field)
 );
+CREATE TABLE IF NOT EXISTS source_mappings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  signature TEXT UNIQUE NOT NULL,
+  fields_json TEXT NOT NULL,
+  decisions_json TEXT NOT NULL,
+  model TEXT,
+  schema_version TEXT,
+  prompt_version TEXT,
+  created_run_id INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  times_reused INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+
+# Columns added after the first release; applied to databases created earlier.
+MIGRATIONS = [("field_mappings", "origin", "TEXT"), ("mapping_runs", "mapping_mode", "TEXT"), ("llm_calls", "purpose", "TEXT")]
+
+RUN_SELECT = """SELECT r.*,
+  (SELECT COUNT(*) FROM llm_calls c WHERE c.run_id = r.id) AS llm_requests,
+  (SELECT COALESCE(SUM(input_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS input_tokens,
+  (SELECT COALESCE(SUM(output_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS output_tokens
+  FROM mapping_runs r"""
 
 TABLES = ["mapping_runs", "source_records", "field_mappings", "canonical_records"]
 
@@ -142,6 +167,9 @@ def conn():
 def init_db() -> None:
     with conn() as c:
         c.executescript(DDL)
+        for table, col, typ in MIGRATIONS:
+            if col not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         for k, v in DEFAULT_SETTINGS.items():
             c.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (k, str(v)))
 

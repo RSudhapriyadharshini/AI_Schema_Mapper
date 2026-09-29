@@ -10,6 +10,7 @@ export default function MappingDetail({ m, run }: { m: Mapping; run: Run }) {
         <div>Field: <code className="rounded bg-white px-1.5 py-0.5 ring-1 ring-slate-200">{m.source_field}</code></div>
         <div className="break-words">Value: <span className="text-slate-700">{m.source_value}</span></div>
         <div className="text-xs text-slate-400">Record {m.record_index + 1}</div>
+        <div className="text-xs text-slate-500">Origin: {m.origin === "reused" ? "decision reused from this source's saved mapping" : "decided by Claude on this record"}</div>
       </div>
       <div className="space-y-2">
         {label("LLM decision")}

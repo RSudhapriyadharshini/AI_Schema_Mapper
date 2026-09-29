@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api")
 
 
 def _run(c, run_id: int) -> dict:
-    run = db.one(c, "SELECT * FROM mapping_runs WHERE id=?", (run_id,))
+    run = db.one(c, db.RUN_SELECT + " WHERE r.id=?", (run_id,))
     if not run:
         raise HTTPException(404, "Run not found.")
     return run_view(run)

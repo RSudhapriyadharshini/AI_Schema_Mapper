@@ -39,3 +39,9 @@ def load_canonical_schema() -> dict:
 
 def api_key_configured() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
+
+NORMALIZE_PROMPT_PATH = APP_DIR / "prompts" / "normalize_values.txt"
+NORMALIZE_PROMPT_VERSION = "1.0"
+# Optional cheaper model for the small "apply saved mapping to new records" requests (defaults to MODEL).
+NORMALIZE_MODEL = os.getenv("ANTHROPIC_NORMALIZE_MODEL", "").strip() or MODEL
+MAPPING_MODES = ("per_source", "per_source_relearn", "per_record")

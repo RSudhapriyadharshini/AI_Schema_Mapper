@@ -41,6 +41,7 @@ export default function AIMapping() {
   const [examplesVersion, setEV] = useState(0);
   const data = useAsync(() => (runId ? api.mappings(runId) : Promise.resolve(null)), [runId, version]);
   const examples = useAsync(() => api.examples(), [examplesVersion, version]);
+  const saved = useAsync(() => api.sourceMappings(), [examplesVersion, version]);
 
   if (!run) return <Empty>No mapping run yet. Go to Source Data or Dashboard to run one.</Empty>;
   if (data.error) return <ErrorBox>{data.error}</ErrorBox>;
@@ -104,6 +105,23 @@ export default function AIMapping() {
             </Fragment>
           ))}
         </Table>
+      </Card>
+
+      <Card title="Saved source mappings (Claude decides once per source, then the decision is reused)">
+        {(saved.data ?? []).length === 0 ? <p className="text-sm text-slate-400">None yet. They are saved when a run maps a source in “map once per source” mode.</p> : (
+          <Table head={["Source (field-name signature)", "Fields", "Decisions", "Decided by", "Reused", ""]}>
+            {saved.data!.map((s) => (
+              <tr key={s.id} className="align-top">
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{s.signature}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{trunc(s.fields.join(", "), 60)}</td>
+                <td className="px-3 py-2 tabular-nums">{s.decisions.length}{s.decisions.some((d) => d.human_approved) && <span className="ml-1 text-xs text-indigo-600">· human-approved</span>}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{s.model} · run {s.created_run_id}</td>
+                <td className="px-3 py-2 tabular-nums">{s.times_reused}×</td>
+                <td className="px-3 py-2 text-right"><button className="text-xs text-rose-600" onClick={async () => { await api.deleteSourceMapping(s.id); setEV((v) => v + 1); }}>forget</button></td>
+              </tr>
+            ))}
+          </Table>
+        )}
       </Card>
 
       <Card title="Approved mapping examples (context for Claude, not rules)" right={

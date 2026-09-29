@@ -91,6 +91,9 @@ def validate_response(parsed: Any, record: dict, schema_fields: dict, thresholds
                 "source_value": source_value_str(record[sf]),  # raw value is authoritative
                 "target_field": tf,
                 "target_value": it.get("target_value") if expected == "mapped" else None,
+                "llm_target_value": it.get("target_value") if expected == "mapped" else None,
+                "llm_etl_can_populate": bool(it.get("etl_can_populate")) and expected == "mapped",
+                "origin": "llm",
                 "confidence": float(conf),
                 "status": expected,
                 "llm_status": expected,
@@ -112,16 +115,24 @@ def validate_response(parsed: Any, record: dict, schema_fields: dict, thresholds
     rows = [r for r in rows if r["status"] == "mapped" or r["source_field"] not in mapped_fields]
 
     for r in rows:
-        if r["status"] != "mapped":
-            continue
-        try:
-            r["target_value"] = str(coerce_value(r["target_value"], schema_fields[r["target_field"]]["data_type"]))
-        except ValueError as e:
-            _demote(r, f"type validation failed: {e}")
-            continue
-        if r["confidence"] < thresholds["review_threshold"]:
-            _demote(r, f"LLM-reported confidence {r['confidence']:.2f} is below the review threshold {thresholds['review_threshold']:.2f}")
+        if r["status"] == "mapped":
+            finalize_mapped_row(r, schema_fields, thresholds)
     return rows
+
+
+def finalize_mapped_row(r: dict, schema_fields: dict, thresholds: dict, human_approved: bool = False) -> None:
+    """Type-check the value and apply the confidence threshold to one mapped row (in place)."""
+    try:
+        r["target_value"] = str(coerce_value(r["target_value"], schema_fields[r["target_field"]]["data_type"]))
+    except ValueError as e:
+        _demote(r, f"type validation failed: {e}")
+        return
+    if not human_approved and r["confidence"] < thresholds["review_threshold"]:
+        _demote(r, f"LLM-reported confidence {r['confidence']:.2f} is below the review threshold {thresholds['review_threshold']:.2f}")
+
+
+def demote(row: dict, note: str) -> None:
+    _demote(row, note)
 
 
 def _demote(row: dict, note: str) -> None:
