@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from .. import config
 from ..services import database as db
 from ..services.coverage import compute_coverage
-from .mapping import run_view
+from .mapping import run_schema, run_view
 
 router = APIRouter(prefix="/api")
 
@@ -48,9 +48,9 @@ def canonical(run_id: int):
 
 @router.get("/runs/{run_id}/coverage")
 def coverage(run_id: int):
-    schema = config.load_canonical_schema()
     with db.conn() as c:
         run = _run(c, run_id)
+        schema = run_schema(db.one(c, "SELECT schema_json FROM mapping_runs WHERE id=?", (run_id,)) or {})
         rws = _mapping_rows(c, run_id, run["thresholds"])
         canon = [json.loads(r["canonical_json"]) for r in db.rows(
             c, """SELECT c.canonical_json FROM canonical_records c JOIN source_records s ON s.id=c.record_id

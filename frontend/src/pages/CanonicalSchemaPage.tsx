@@ -25,7 +25,7 @@ export default function CanonicalSchemaPage() {
             <tr key={f.field} className="align-top">
               <td className="px-3 py-2 font-mono text-xs text-indigo-700">{f.field}</td>
               <td className="px-3 py-2 text-slate-600">{f.description}</td>
-              <td className="px-3 py-2 text-xs">{f.data_type}</td>
+              <td className="px-3 py-2 text-xs">{f.data_type}{f.item_fields && <div className="text-slate-400">{f.item_fields.join(", ")}</div>}</td>
               <td className="px-3 py-2">{f.required ? "Yes" : "No"}</td>
               <td className="px-3 py-2"><OwnerBadge owner={f.owner} /></td>
               <td className="px-3 py-2 text-xs text-slate-500">{f.source_priority.join(" › ")}</td>

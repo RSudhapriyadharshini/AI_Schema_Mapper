@@ -8,6 +8,7 @@ from ..services import database as db
 from ..services import pipeline, sources
 from ..services.coverage import build_canonical, schema_index
 from ..services.errors import MappingError
+from ..services.parser import flatten_record
 from ..services.validator import coerce_value, usable
 
 router = APIRouter(prefix="/api")
@@ -16,7 +17,7 @@ router = APIRouter(prefix="/api")
 class RunRequest(BaseModel):
     upload_id: int
     use_approved_examples: bool = True
-    mapping_mode: str = "per_source"  # per_source | per_source_relearn | per_record
+    mapping_mode: str = "per_field"  # per_field | per_field_relearn | per_source | per_source_relearn | per_record
 
 
 @router.post("/runs")
@@ -30,6 +31,7 @@ def create_run(req: RunRequest):
 
 
 def run_view(r: dict) -> dict:
+    r.pop("schema_json", None)
     r["label"] = db.run_label(r["id"])
     r["thresholds"] = json.loads(r.pop("thresholds_json") or "null") or db.get_settings()
     return r
@@ -58,9 +60,15 @@ class Review(BaseModel):
     target_field: str | None = None
 
 
+def run_schema(run: dict) -> dict:
+    if not run.get("schema_json"):
+        raise HTTPException(409, {"code": "OLD_SCHEMA", "message": "This run predates schema snapshots and cannot be shown or reviewed. Start a new run."})
+    return json.loads(run["schema_json"])
+
+
 def rebuild_canonical(c, run_id: int, record_id: int) -> None:
     run = db.one(c, "SELECT * FROM mapping_runs WHERE id=?", (run_id,))
-    schema = config.load_canonical_schema()
+    schema = run_schema(run)
     rws = db.rows(c, "SELECT * FROM field_mappings WHERE mapping_run_id=? AND record_id=?", (run_id, record_id))
     for r in rws:
         r["etl_can_populate"] = bool(r["etl_can_populate"])
@@ -73,16 +81,17 @@ def rebuild_canonical(c, run_id: int, record_id: int) -> None:
 def review(mapping_id: int, body: Review):
     if body.action not in ("approve", "reject", "skip"):
         raise HTTPException(400, "action must be approve, reject or skip")
-    schema = schema_index(config.load_canonical_schema())
     with db.conn() as c:
         m = db.one(c, "SELECT * FROM field_mappings WHERE id=?", (mapping_id,))
         if not m:
             raise HTTPException(404, "Mapping not found.")
+        run = db.one(c, "SELECT source_name, schema_json FROM mapping_runs WHERE id=?", (m["mapping_run_id"],))
+        schema = schema_index(run_schema(run))
         if body.action == "skip":
             c.execute("UPDATE field_mappings SET review_state='skipped' WHERE id=?", (mapping_id,))
             return {"ok": True}
         raw = json.loads(db.one(c, "SELECT raw_json FROM source_records WHERE id=?", (m["record_id"],))["raw_json"])
-        sig, new_target = sources.signature(raw), None
+        sig, new_target = sources.signature(flatten_record(raw)[0]), None
         if body.action == "reject":
             c.execute("UPDATE field_mappings SET status='unmapped', target_field=NULL, target_value=NULL, owner=NULL, etl_can_populate=0, review_state='rejected' WHERE id=?", (mapping_id,))
         else:
@@ -104,6 +113,7 @@ def review(mapping_id: int, body: Review):
         db.refresh_run_counts(c, m["mapping_run_id"])
     # carry the decision into the saved source mapping so later runs reuse it
     sources.update_after_review(sig, m["source_field"], m["target_field"], body.action, new_target, m["confidence"] or 0.0, schema)
+    sources.update_field_decision_after_review(run["source_name"], m["source_field"], m["target_field"], body.action, new_target, m["confidence"] or 0.0, schema)
     return {"ok": True}
 
 
@@ -112,6 +122,17 @@ def review(mapping_id: int, body: Review):
 @router.get("/source-mappings")
 def source_mappings():
     return sources.list_saved()
+
+
+@router.get("/field-decisions")
+def field_decisions():
+    return sources.list_field_decisions()
+
+
+@router.delete("/field-decisions")
+def delete_field_decisions(source_name: str):
+    sources.delete_field_decisions(source_name)
+    return {"ok": True}
 
 
 @router.delete("/source-mappings/{source_id}")

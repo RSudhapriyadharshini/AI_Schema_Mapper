@@ -3,13 +3,13 @@ export type Thresholds = { high_threshold: number; review_threshold: number };
 
 export interface SchemaField {
   field: string; label: string; description: string; data_type: string;
-  required: boolean; owner: Owner; source_priority: string[];
+  required: boolean; owner: Owner; source_priority: string[]; item_fields?: string[]; group?: string;
 }
 export interface CanonicalSchema { schema_version: string; owners: Owner[]; fields: SchemaField[] }
 
 export interface Upload {
   id: number; file_name: string; format: string; num_records: number; num_fields: number;
-  fields_extracted: number; dropped_empty: number; crawler_version: string; extraction_prompt_version: string;
+  fields_extracted: number; dropped_empty: number; source_name: string; crawler_version: string; extraction_prompt_version: string;
   records: Record<string, unknown>[]; fields: { field: string; records: number }[];
 }
 
@@ -47,7 +47,7 @@ export interface Lineage {
   model: string; schema_version: string; prompt_version: string; review_state: string | null;
 }
 export interface CanonicalRecord {
-  id: number; record_index: number; profile: Record<string, string | number>; lineage: Record<string, Lineage>; raw: Record<string, unknown>;
+  id: number; record_index: number; profile: Record<string, unknown>; flat: Record<string, unknown>; lineage: Record<string, Lineage>; raw: Record<string, unknown>;
 }
 export interface LlmCall {
   id: number; record_index: number; purpose: string | null; attempt: number; model: string; prompt_version: string; status: string;
@@ -63,4 +63,5 @@ export interface SourceMapping {
   id: number; signature: string; fields: string[]; decisions: SourceDecision[]; model: string; schema_version: string;
   created_run_id: number; updated_at: string; times_reused: number;
 }
-export type MappingMode = "per_source" | "per_source_relearn" | "per_record";
+export type MappingMode = "per_field" | "per_field_relearn" | "per_source" | "per_source_relearn" | "per_record";
+export interface FieldDecision { id: number; source_name: string; path: string; decisions: SourceDecision[]; times_reused: number; model: string; created_run_id: number }

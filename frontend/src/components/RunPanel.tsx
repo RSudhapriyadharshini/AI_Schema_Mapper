@@ -8,7 +8,7 @@ import type { MappingMode } from "../types";
 export default function RunPanel({ compact = false }: { compact?: boolean }) {
   const { upload, setUpload, starting, startError, startRun, activeSteps, activeRun, runId, run, version } = useApp();
   const [useExamples, setUseExamples] = useState(true);
-  const [mode, setMode] = useState<MappingMode>("per_source");
+  const [mode, setMode] = useState<MappingMode>("per_field");
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const running = activeRun?.status === "running" || run?.status === "running";
@@ -31,8 +31,10 @@ export default function RunPanel({ compact = false }: { compact?: boolean }) {
             <Button onClick={() => startRun(useExamples, mode)} disabled={starting || running}>{running ? "Mapping in progress…" : "Run AI Schema Mapping"}</Button>
             <span className="text-xs text-slate-500">on <b>{upload.file_name}</b> ({upload.num_records} records, {upload.num_fields} source fields)</span>
             <select value={mode} onChange={(e) => setMode(e.target.value as MappingMode)} className="rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700" title="How many Claude requests to make">
-              <option value="per_source">Map once per source (saved, lowest cost)</option>
-              <option value="per_source_relearn">Map once per source, ignore saved (re-learn)</option>
+              <option value="per_field">Map each distinct field once (saved, recommended)</option>
+              <option value="per_field_relearn">Map each distinct field once, ignore saved (re-learn)</option>
+              <option value="per_source">Map one sample record per source (saved)</option>
+              <option value="per_source_relearn">Map one sample record per source, ignore saved</option>
               <option value="per_record">Map every record (baseline, highest cost)</option>
             </select>
             {!compact && (

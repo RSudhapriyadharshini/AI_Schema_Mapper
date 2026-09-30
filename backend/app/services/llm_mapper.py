@@ -96,7 +96,7 @@ def _request_json(client, *, run_id, record_index, purpose, model, prompt_versio
         if resp.stop_reason in ("refusal", "max_tokens"):
             _log_call(run_id, record_index, purpose, attempt, model, prompt_version, "invalid", request_text, text,
                       f"stop_reason={resp.stop_reason}", resp.stop_reason, resp.usage, latency)
-            raise MappingError("MALFORMED_LLM_RESPONSE", f"Claude stopped with '{resp.stop_reason}' ({label}).")
+            raise MappingError("MALFORMED_LLM_RESPONSE", f"Claude stopped with '{resp.stop_reason}' ({label}). If the response was cut off, lower FIELD_CHUNK.")
         try:
             try:
                 parsed = json.loads(text)
@@ -140,8 +140,14 @@ def normalize_batch(client, run_id: int, items: list[tuple[int, dict]], decision
     Returns {(record_index, source_field, target_field): value_or_None}.
     """
     schema_fields = {f["field"]: f for f in schema["fields"]}
+    # a record only needs values for the source fields it actually has
+    expected = {(i, d["source_field"], d["target_field"]) for i, rec in items for d in decisions if d["source_field"] in rec}
+    items = [(i, rec) for i, rec in items if any(k[0] == i for k in expected)]
+    if not items:
+        return {}
+    used = {(sf, tf) for _, sf, tf in expected}
+    decisions = [d for d in decisions if (d["source_field"], d["target_field"]) in used]
     targets = sorted({d["target_field"] for d in decisions})
-    expected = {(i, d["source_field"], d["target_field"]) for i, _ in items for d in decisions}
     src_fields = sorted({d["source_field"] for d in decisions})
 
     response_schema = {
@@ -159,6 +165,7 @@ def normalize_batch(client, run_id: int, items: list[tuple[int, dict]], decision
             "source_field": d["source_field"], "target_field": d["target_field"],
             "target_field_description": schema_fields[d["target_field"]]["description"],
             "data_type": schema_fields[d["target_field"]]["data_type"],
+            "item_fields": schema_fields[d["target_field"]].get("item_fields"),
             "worked_example": {"source_value": d["example_source_value"], "target_value": d["example_target_value"]},
         } for d in decisions],
         "records": [{"record_index": i, "values": {f: rec[f] for f in src_fields if f in rec}} for i, rec in items],
@@ -189,3 +196,40 @@ def normalize_batch(client, run_id: int, items: list[tuple[int, dict]], decision
         prompt_version=config.NORMALIZE_PROMPT_VERSION, system=_NORMALIZE_PROMPT, user_text=user_text,
         response_schema=response_schema, validate=validate, label=f"normalizing {len(items)} records",
         on_sent=on_sent, on_response=on_response)
+
+
+def build_fields_message(paths: list[str], index: dict, flats: list[dict], schema: dict, examples: list[dict]) -> str:
+    parts = [
+        f"CANONICAL SCHEMA (schema_version {schema['schema_version']}). These are the ONLY valid target fields:",
+        json.dumps(schema["fields"], indent=1),
+    ]
+    if examples:
+        parts += [
+            "APPROVED MAPPING EXAMPLES from past human review (context only, not rules; the fields below decide):",
+            json.dumps([{"source_field": e["source_field"], "target_field": e["target_field"], "example_value": e["example_value"]} for e in examples], indent=1),
+        ]
+    from . import sources
+    parts += [
+        "FIELDS TO MAP. Each entry is one distinct source field (a dotted path into the crawled record) seen across several records. "
+        "Decide what each field means from its name, its sample values and the context records. "
+        "For source_value and target_value use sample_values[0].",
+        json.dumps([{"source_field": p, "records_with_field": len(index[p]["records"]), "sample_values": index[p]["samples"]} for p in paths],
+                   indent=1, ensure_ascii=False),
+        "CONTEXT RECORDS (whole records that contain some of these fields, for surrounding-field context only; do NOT map them):",
+        json.dumps(sources.context_records(paths, flats, index), indent=1, ensure_ascii=False),
+    ]
+    return "\n\n".join(parts)
+
+
+def map_fields_chunk(client, run_id: int, chunk_no: int, paths: list[str], index: dict, flats: list[dict], schema: dict,
+                     examples: list[dict], thresholds: dict, on_sent=None, on_response=None) -> list[dict]:
+    """Ask Claude what a group of distinct source fields means. Returns validated rows (one set per field)."""
+    schema_fields = {f["field"]: f for f in schema["fields"]}
+    sample_record = {p: index[p]["first_raw"] for p in paths}  # the raw value of sample #1 is authoritative
+    return _request_json(
+        client, run_id=run_id, record_index=chunk_no, purpose="map_fields", model=config.MODEL,
+        prompt_version=config.PROMPT_VERSION, system=_SYSTEM_PROMPT,
+        user_text=build_fields_message(paths, index, flats, schema, examples),
+        response_schema=build_response_schema(schema),
+        validate=lambda parsed: validate_response(parsed, sample_record, schema_fields, thresholds),
+        label=f"mapping fields chunk {chunk_no + 1} ({len(paths)} fields)", on_sent=on_sent, on_response=on_response)

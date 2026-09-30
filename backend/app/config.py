@@ -13,7 +13,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 load_dotenv(BACKEND_DIR / ".env")
 
 DB_PATH = Path(os.getenv("DB_PATH", BACKEND_DIR / "data" / "draft.db"))
-SAMPLE_DATA_PATH = PROJECT_ROOT / "sample_data" / "sample_crawler_data.json"
+SAMPLE_DATA_PATH = PROJECT_ROOT / "sample_data" / "real_sample_data.json"
 APPROVED_SEED_PATH = PROJECT_ROOT / "sample_data" / "approved_examples_seed.json"
 CANONICAL_SCHEMA_PATH = APP_DIR / "schemas" / "canonical_schema.json"
 RESPONSE_SCHEMA_PATH = APP_DIR / "schemas" / "mapping_response.json"
@@ -21,7 +21,7 @@ PROMPT_PATH = APP_DIR / "prompts" / "schema_mapping.txt"
 
 MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5-5")
 EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium").strip()
-PROMPT_VERSION = "1.0"
+PROMPT_VERSION = "2.0"
 MAPPER_CONCURRENCY = int(os.getenv("MAPPER_CONCURRENCY", "4"))
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
 MAX_TOKENS = 16000
@@ -41,7 +41,11 @@ def api_key_configured() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
 
 NORMALIZE_PROMPT_PATH = APP_DIR / "prompts" / "normalize_values.txt"
-NORMALIZE_PROMPT_VERSION = "1.0"
+NORMALIZE_PROMPT_VERSION = "2.0"
 # Optional cheaper model for the small "apply saved mapping to new records" requests (defaults to MODEL).
 NORMALIZE_MODEL = os.getenv("ANTHROPIC_NORMALIZE_MODEL", "").strip() or MODEL
-MAPPING_MODES = ("per_source", "per_source_relearn", "per_record")
+MAPPING_MODES = ("per_field", "per_field_relearn", "per_source", "per_source_relearn", "per_record")
+FIELD_CHUNK = int(os.getenv("FIELD_CHUNK", "60"))  # unique source fields decided per Claude request in per_field mode
+
+# Values a crawler emits to mean "no data". Treated as missing before mapping (raw data is kept untouched).
+PLACEHOLDER_VALUES = {"", "-", "--", "---", "n/a", "na", "unknown", "none", "null", "nil", "undefined", "not available", "tbd"}

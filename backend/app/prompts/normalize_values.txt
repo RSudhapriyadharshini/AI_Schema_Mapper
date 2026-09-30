@@ -6,7 +6,7 @@ For every record and every mapping, produce the normalized target value for that
 
 - Derive the value only from that record's source value. Never invent or guess a value.
 - Follow the worked example for how to transform the value (for example, taking the first name from a full name, taking the city from an address, or turning "12 years" into 12).
-- Respect the canonical data type: integers as plain digits, URLs and emails as written.
+- Respect the canonical data type: integers as plain digits, URLs and emails as written. For string_list targets return a JSON-encoded array of strings (split delimited text, remove duplicates). For object_list targets return a JSON-encoded array of objects that use ONLY the given item_fields as keys.
 - If the value for a record does not contain the information needed, return null for that entry.
 - Do not decide what a field means; the mappings are already decided. Do not add or remove entries.
 

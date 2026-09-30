@@ -32,6 +32,7 @@ Copy `.env.example` to `.env` in the project root and set:
 | `ANTHROPIC_MODEL` | optional, default `claude-opus-5-5` |
 | `ANTHROPIC_EFFORT` | optional, default `medium` (blank to omit; needed for models without effort support) |
 | `ANTHROPIC_NORMALIZE_MODEL` | optional, model for the small value-derivation requests (defaults to `ANTHROPIC_MODEL`) |
+| `FIELD_CHUNK` | optional, distinct fields decided per request in per_field mode, default 60 (lower it if a response is cut off) |
 | `MAPPER_CONCURRENCY` | optional, parallel Claude calls, default 4 |
 | `LLM_TIMEOUT_SECONDS` | optional, default 180 |
 
@@ -63,8 +64,8 @@ Open <http://localhost:3000>.
 3. Explore **AI Mapping** (flow, table, click a row to explain, review queue), **Canonical Profile** (with lineage),
    **Coverage Analysis**, **Draft Database**, **Mapping Logs** (raw Claude request/response) and **Canonical Schema**.
 
-Try editing `sample_data/sample_crawler_data.json`, e.g. rename `agent_name` to `representative_name` or add
-`random_unknown_field`, re-load and re-run: the mapping changes accordingly.
+Try editing `sample_data/real_sample_data.json` (or upload your own file), e.g. rename a field or add
+`random_unknown_field`, and re-run: the mapping changes accordingly.
 
 ## Database
 
@@ -95,27 +96,49 @@ Confidence is **LLM-reported**, not a calibrated probability. Bands (configurabl
 Manual review: approve (choose a canonical field), reject or skip ambiguous/unmapped fields. Approved mappings are stored and
 sent to Claude as examples on later runs; Claude still makes the decision.
 
-## Cost control: map once per source
+## Canonical schema (version 2.0)
 
-Records from the same website share the same field names. Instead of asking Claude about every record, the
-app groups records by their **field-name signature** and runs in one of three modes (dropdown on the run panel):
+`backend/app/schemas/canonical_schema.json` holds 40 strict fields: the person fields (`name`, `title`, `about`, `phone`,
+`email1`, `positions`, `licenses`, ...) and `company_*` fields that are assembled into `profile.company[0]`. Each field has a
+description, data type, required flag, owner and source priority. List-typed fields (`string_list`, `object_list`) are
+exchanged with Claude as JSON-encoded strings and type-checked (`object_list` entries may only use the field's `item_fields`).
+Owners, required flags and the sub-fields of `operating_hours` (`day`, `open`, `close`) are editable defaults.
 
-| Mode | What Claude is asked | Cost |
+Each run stores a snapshot of the schema it used, so old runs stay explainable after the schema changes. Runs created
+before snapshots existed cannot be displayed; start a new run or delete `backend/data/draft.db*`.
+
+## Input handling
+
+* Records are stored exactly as uploaded (`source_records.raw_json`). Nothing is overwritten.
+* For mapping, each record is **flattened**: nested objects become dotted paths (`location_info.town`,
+  `record.agentname`); lists stay whole (work history, social links and licenses are understood as units).
+* Placeholder values that mean "no data" (`""`, `-`, `N/A`, `unknown`, `null`, ...; list in `config.PLACEHOLDER_VALUES`) are ignored
+  for mapping and counted on the Source Data page. This is data cleaning, not a decision about what a field means.
+
+## Cost control: mapping modes
+
+The dropdown on the run panel chooses how many Claude requests a run makes:
+
+| Mode | What Claude is asked | Best when |
 |---|---|---|
-| **Map once per source** (default) | Maps one sample record per source. The decision is saved and reused for the other records, and for later runs of the same source. | lowest |
-| Map once per source, re-learn | Same, but ignores saved mappings and decides again (use after changing the model, prompt or schema). | low |
-| Map every record | The original behaviour: one full mapping request per record. Use it as a quality/cost baseline. | highest |
+| **Map each distinct field once** (`per_field`, default) | Every distinct source field path across all records is decided once, with 3-5 sample values and two whole context records. Decisions are saved per source name and reused on later runs. | many records share field names, or the same source is crawled repeatedly |
+| `per_field_relearn` | Same, ignoring saved decisions | after changing model, prompt or schema |
+| Map one sample record per source (`per_source`) | One whole sample record per field-name signature, reused for the other records | records come in a few clean templates |
+| `per_source_relearn` | Same, ignoring saved mappings | |
+| Map every record (`per_record`) | One full mapping request per record | baseline for comparing quality and cost |
 
-How reuse works without hard-coding meaning: Claude's decision (source field, target field, status, confidence, reason)
-is stored per source. Fields whose value passes through unchanged are simply copied. Fields that need transforming
-(full name to first/last name, "12 years" to 12, splitting an address) go to Claude in **one small batched request per source**
-that carries only those values, not the whole schema. Every reused mapping shows its origin, is type-checked, and is still
-subject to the confidence thresholds. Human review decisions are written back into the saved mapping, so a corrected
-mapping is reused next time. Saved mappings are keyed to the schema and prompt version and are ignored when either changes.
-Records with a different set of field names count as a different source and are mapped separately.
+How reuse works without hard-coding meaning: Claude's decision (source field, target field, status, confidence, reason) is
+stored. Fields whose value already fits the target type are copied. Fields that need transforming (splitting a string into a list,
+"12 years" to 12, an address into parts, a list of objects into `positions`) go to Claude in batched requests (20 records per
+request) that carry only those values, not the schema. Each reused mapping is type-checked and subject to the confidence
+thresholds, and shows its origin. Human review decisions are written back into the saved decisions, so a correction is reused next time.
+Saved decisions are keyed to the source name, schema version and prompt version. A different source name is decided again by Claude;
+decisions are never guessed across sources. Up to `FIELD_CHUNK` (default 60) fields are decided per request.
 
-The run panel shows how many Claude requests and tokens a run used. `ANTHROPIC_NORMALIZE_MODEL` optionally sets a cheaper
-model for the small value-derivation requests.
+Your mileage depends on the data: `per_field` and `per_source` save most when field names repeat. A file where every record
+uses its own field names (like `sample_data/real_sample_data.json`, 675 distinct paths across 30 records) saves little on a first run, and
+`per_source` saves nothing there. The saving then comes from saved decisions on later runs of the same source. The run panel shows the
+Claude requests and tokens each run used, so compare modes on your own file.
 
 ## How coverage is calculated
 
@@ -133,9 +156,9 @@ backend/app/api/{upload,mapping,records,schema}.py
 backend/app/services/{parser,llm_mapper,validator,coverage,pipeline,sources,database,errors}.py
 backend/app/prompts/{schema_mapping,normalize_values}.txt
 backend/app/schemas/{canonical_schema,mapping_response}.json
-backend/tests/test_pipeline.py, test_per_source.py  # offline tests using a STUB Claude client (test-only)
+backend/tests/test_pipeline.py, test_modes.py  # offline tests using a STUB Claude client (test-only)
 frontend/src/{App.tsx, pages/, components/, services/api.ts}
-sample_data/{sample_crawler_data.json, approved_examples_seed.json}
+sample_data/{real_sample_data.json (loaded by the sample button), approved_examples_seed.json, older small samples}
 ```
 
 ## Tests

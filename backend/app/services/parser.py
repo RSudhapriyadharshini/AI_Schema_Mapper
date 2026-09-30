@@ -1,22 +1,15 @@
-"""Parse uploaded crawler output (JSON or CSV) into a list of flat-ish records."""
+"""Parse uploaded crawler output (JSON or CSV), and flatten nested records into dotted field paths."""
 import csv
 import io
 import json
 from typing import Any
 
+from .. import config
 from .errors import UploadError
 
 
-def _is_empty(v: Any) -> bool:
-    return v is None or (isinstance(v, str) and not v.strip()) or v == [] or v == {}
-
-
-def _clean_record(rec: dict) -> dict:
-    return {str(k).strip(): v for k, v in rec.items() if str(k).strip() and not _is_empty(v)}
-
-
 def parse_upload(file_name: str, content: bytes) -> dict:
-    """Return {format, records, dropped_empty}. Raises UploadError on bad input."""
+    """Return {format, records}. Records are returned exactly as uploaded (raw data is never altered)."""
     if not content or not content.strip():
         raise UploadError("EMPTY_FILE", "The uploaded file is empty.")
     try:
@@ -34,17 +27,55 @@ def parse_upload(file_name: str, content: bytes) -> dict:
 
     if not raw:
         raise UploadError("EMPTY_FILE", "The file contains no records.")
-
-    dropped = 0
-    records = []
-    for rec in raw:
-        cleaned = _clean_record(rec)
-        dropped += len(rec) - len(cleaned)
-        if cleaned:
-            records.append(cleaned)
+    records = [r for r in raw if flatten_record(r)[0]]
     if not records:
         raise UploadError("EMPTY_FILE", "All records were empty.")
-    return {"format": fmt, "records": records, "dropped_empty": dropped}
+    return {"format": fmt, "records": records}
+
+
+def _clean(v: Any):
+    """Drop placeholder / empty values recursively. Returns (cleaned_or_None, number_of_leaf_values_dropped)."""
+    if isinstance(v, str):
+        s = v.strip()
+        return (None, 1) if s.lower() in config.PLACEHOLDER_VALUES else (s, 0)
+    if isinstance(v, dict):
+        out, dropped = {}, 0
+        for k, x in v.items():
+            c, d = _clean(x)
+            dropped += d
+            if c is not None and str(k).strip():
+                out[str(k).strip()] = c
+        return (out or None), dropped
+    if isinstance(v, list):
+        out, dropped = [], 0
+        for x in v:
+            c, d = _clean(x)
+            dropped += d
+            if c is not None:
+                out.append(c)
+        return (out or None), dropped
+    return (None, 1) if v is None else (v, 0)
+
+
+def flatten_record(record: dict) -> tuple[dict, int]:
+    """Return ({dotted.path: value}, dropped_count) for the mapping stage.
+
+    Nested objects become dotted paths (``location.city``). Lists stay whole, because a list of objects
+    (for example work history) has to be understood as a unit. Placeholders like "-" / "N/A" are dropped.
+    """
+    cleaned, dropped = _clean(record)
+    flat: dict = {}
+
+    def walk(v, prefix):
+        if isinstance(v, dict):
+            for k, x in v.items():
+                walk(x, f"{prefix}.{k}" if prefix else k)
+        else:
+            flat[prefix] = v
+
+    if isinstance(cleaned, dict):
+        walk(cleaned, "")
+    return flat, dropped
 
 
 def _parse_json(text: str) -> list[dict]:

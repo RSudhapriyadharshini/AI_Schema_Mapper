@@ -1,7 +1,9 @@
 """Canonical profile construction and coverage metrics. Pure arithmetic over validated mappings."""
 from collections import defaultdict
 
-from .validator import usable, coerce_value
+import json
+
+from .validator import coerce_value, usable
 
 RANK = {"mapped": 3, "ambiguous": 2, "unmapped": 1}
 
@@ -17,30 +19,76 @@ def schema_index(schema: dict) -> dict:
     return {f["field"]: f for f in schema["fields"]}
 
 
+LIST_TYPES = ("string_list", "object_list")
+
+
+def nest_profile(flat: dict) -> dict:
+    """Assemble the nested canonical profile: person fields at the top, company_* fields under company[0]."""
+    profile: dict = {}
+    company: dict = {}
+    for fid, val in flat.items():
+        if fid.startswith("company_social_links."):
+            company.setdefault("company_social_links", {})[fid.split(".", 1)[1]] = val
+        elif fid.startswith("company_"):
+            company[fid] = val
+        else:
+            profile[fid] = val
+    if company:
+        profile["company"] = [company]
+    return profile
+
+
 def build_canonical(mapping_rows: list[dict], schema: dict, meta: dict) -> dict:
-    """Pick the best mapped value per canonical field. `meta` = run_id, model, schema_version, prompt_version."""
-    best: dict = {}
+    """Build one canonical record. Scalars take the highest-confidence mapped value; list fields merge all sources.
+
+    Returns {"profile": nested, "flat": {field_id: value}, "lineage": {field_id: {...}}}.
+    `meta` = run_id, model, schema_version, prompt_version.
+    """
+    by_field: dict = defaultdict(list)
     for r in mapping_rows:
-        if r["status"] != "mapped" or not r.get("target_field") or not usable(r.get("target_value")):
-            continue
-        cur = best.get(r["target_field"])
-        if cur is None or (r["confidence"] or 0) > (cur["confidence"] or 0):
-            best[r["target_field"]] = r
-    profile, lineage = {}, {}
+        if r["status"] == "mapped" and r.get("target_field") and usable(r.get("target_value")):
+            by_field[r["target_field"]].append(r)
+    flat, lineage = {}, {}
     for f in schema["fields"]:
-        r = best.get(f["field"])
-        if not r:
+        rows = by_field.get(f["field"])
+        if not rows:
             continue
-        key = f["field"].split(".", 1)[1]
-        profile[key] = coerce_value(r["target_value"], f["data_type"]) if f["data_type"] == "integer" else str(r["target_value"]).strip()
-        lineage[key] = {
-            "source_field": r["source_field"], "source_value": r["source_value"],
-            "confidence": r["confidence"], "mapping_id": r.get("id"),
-            "mapping_run": f"RUN-{meta['run_id']:05d}", "model": meta["model"],
+        typed = []
+        for r in rows:
+            try:
+                typed.append((r, coerce_value(r["target_value"], f["data_type"], f.get("item_fields"))))
+            except ValueError:
+                continue
+        if not typed:
+            continue
+        if f["data_type"] in LIST_TYPES:
+            value, seen = [], set()
+            for _, items in typed:
+                for it in items:
+                    k = json.dumps(it, sort_keys=True, ensure_ascii=False).lower()
+                    if k not in seen:
+                        seen.add(k)
+                        value.append(it)
+            srcs = sorted({r["source_field"] for r, _ in typed})
+            best = typed[0][0]
+            src = " + ".join(srcs)
+        else:
+            best, value = max(typed, key=lambda t: t[0]["confidence"] or 0)
+            src = best["source_field"]
+        flat[f["field"]] = value
+        lineage[f["field"]] = {
+            "source_field": src, "source_value": best["source_value"], "confidence": best["confidence"],
+            "mapping_id": best.get("id"), "mapping_run": f"RUN-{meta['run_id']:05d}", "model": meta["model"],
             "schema_version": meta["schema_version"], "prompt_version": meta["prompt_version"],
-            "review_state": r.get("review_state"),
+            "review_state": best.get("review_state"),
         }
-    return {"profile": profile, "lineage": lineage}
+    return {"profile": nest_profile(flat), "flat": flat, "lineage": lineage}
+
+
+def display_value(v) -> str | None:
+    if v is None:
+        return None
+    return json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else str(v)
 
 
 def source_field_status(mapping_rows: list[dict]) -> dict:
@@ -65,12 +113,12 @@ def compute_coverage(schema: dict, mapping_rows: list[dict], canonicals: list[di
 
     per_field = []
     for f in fields:
-        key = f["field"].split(".", 1)[1]
-        populated = sum(1 for c in canonicals if usable(c["profile"].get(key)))
+        key = f["field"]
+        populated = sum(1 for c in canonicals if usable(c["flat"].get(key)))
         srcs: dict = defaultdict(set)
         for r in used[f["field"]]:
             srcs[r["source_field"]].add(r["record_index"])
-        sample = next((c["profile"][key] for c in canonicals if usable(c["profile"].get(key))), None)
+        sample = display_value(next((c["flat"][key] for c in canonicals if usable(c["flat"].get(key))), None))
         etl_ok = any(r["etl_can_populate"] for r in used[f["field"]])
         status = "missing" if populated == 0 else ("populated" if populated == num_records else "partial")
         per_field.append({
@@ -89,8 +137,8 @@ def compute_coverage(schema: dict, mapping_rows: list[dict], canonicals: list[di
 
     rec_scores = []
     for c in canonicals:
-        n = sum(1 for f in fields if usable(c["profile"].get(f["field"].split(".", 1)[1])))
-        n_req = sum(1 for f in fields if f["required"] and usable(c["profile"].get(f["field"].split(".", 1)[1])))
+        n = sum(1 for f in fields if usable(c["flat"].get(f["field"])))
+        n_req = sum(1 for f in fields if f["required"] and usable(c["flat"].get(f["field"])))
         rec_scores.append({"populated": n, "total": total, "required_populated": n_req, "required_total": len(required)})
     avg = lambda xs: sum(xs) / len(xs) if xs else 0.0
     completeness = avg([s["populated"] / total for s in rec_scores])

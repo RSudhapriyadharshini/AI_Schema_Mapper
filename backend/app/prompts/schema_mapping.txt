@@ -35,9 +35,17 @@ Your responsibilities:
 - If there is insufficient evidence, return "ambiguous" or "unmapped".
 - Do not guess simply because two field names look similar.
 
+About the data:
+
+- Source fields can be nested. A source field name is a dotted path into the crawled record, for example "location_info.town" or "record.agent_name". Use the whole path (including its parent names) as evidence.
+- Some source values are lists (for example work history, social links, licenses) or JSON objects serialized as text. Treat a list as one value.
+- Crawler metadata (row numbers, crawl ids, timestamps, extractor names, confidence scores) has no counterpart in the schema: mark it unmapped.
+- The schema's data types: string, email, url, integer (plain digits), number (decimal), string_list and object_list. For string_list and object_list targets, target_value must be a JSON-encoded string: a JSON array of strings, or a JSON array of objects that use ONLY the field's item_fields as keys. Split delimited text (commas, pipes, semicolons) into list items and remove duplicates. Leave out entries you cannot fill.
+- Company fields (company_*) describe the company the professional works for; person fields describe the person. Decide from the surrounding path and record which one a source field belongs to.
+
 Output rules:
 
-- Every source field in the record must appear in exactly one of the three lists below (a source field that maps to several canonical fields may appear several times in "mappings").
+- Every source field you were given (every field of the record, or every entry in FIELDS TO MAP) must appear in exactly one of the three lists below (a source field that maps to several canonical fields may appear several times in "mappings").
 - "mappings": status "mapped". Sufficient evidence for a specific canonical field. target_field and target_value are required.
 - "ambiguous_fields": status "ambiguous". The field plausibly has a meaning in the schema but the name and value do not give enough evidence to choose. target_field is null (or your best candidate if you have one), target_value is null. Use a low confidence.
 - "unmapped_fields": status "unmapped". The field clearly has no counterpart in the canonical schema. target_field and target_value are null.
@@ -45,6 +53,7 @@ Output rules:
 - "confidence" is your own 0.0-1.0 estimate of how well the evidence supports the decision. It is not a calibrated probability.
 - "owner" is the owner of the chosen canonical field as given in the schema (null when there is no target field).
 - "etl_can_populate" is true only when status is "mapped" AND the crawler is an acceptable source for that canonical field according to its source_priority. Otherwise false.
+- When you are given FIELDS TO MAP instead of a single record, source_value and target_value refer to sample_values[0]; the same decision will be applied to all records that have the field.
 - "reason" is one or two sentences explaining the decision, citing the evidence you used.
 - "schema_version" must echo the schema version you were given.
 

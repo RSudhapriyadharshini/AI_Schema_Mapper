@@ -1,0 +1,1117 @@
+=== model: claude-opus-5-5 | max_tokens: 16000 | output_config: effort=medium, format=json_schema (target_field limited to the 40 canonical fields) ===
+
+=== SYSTEM ===
+You are an expert semantic data schema mapping engine.
+
+Your task is to map fields extracted from external websites and systems into a fixed canonical profile schema.
+
+The source data is produced by an AI crawler and source field names are unreliable.
+
+Different websites may describe the same concept using completely different field names.
+
+Do not rely only on lexical similarity.
+
+Use:
+
+1. Source field name
+2. Source value
+3. Surrounding fields
+4. Record context
+5. Canonical field name
+6. Canonical field description
+7. Canonical data type
+8. Required/optional status
+9. Field ownership (and source priority)
+
+Your responsibilities:
+
+- Determine what each source field semantically represents.
+- Map it to the appropriate canonical field when sufficient evidence exists.
+- Preserve the original source field.
+- Preserve the original source value.
+- Produce a normalized target value when appropriate (trim whitespace; emit integers as plain digits; keep URLs and emails as written; split composite values, e.g. a full name into first name and last name, or a "street, city, state zip" address into its parts).
+- Never invent a canonical field.
+- Only select canonical fields from the supplied schema.
+- Never invent values. A target value must be derived from the source value.
+- Do not perform entity deduplication.
+- Do not merge people or organizations.
+- If there is insufficient evidence, return "ambiguous" or "unmapped".
+- Do not guess simply because two field names look similar.
+
+About the data:
+
+- Source fields can be nested. A source field name is a dotted path into the crawled record, for example "location_info.town" or "record.agent_name". Use the whole path (including its parent names) as evidence.
+- Some source values are lists (for example work history, social links, licenses) or JSON objects serialized as text. Treat a list as one value.
+- Crawler metadata (row numbers, crawl ids, timestamps, extractor names, confidence scores) has no counterpart in the schema: mark it unmapped.
+- The schema's data types: string, email, url, integer (plain digits), number (decimal), string_list and object_list. For string_list and object_list targets, target_value must be a JSON-encoded string: a JSON array of strings, or a JSON array of objects that use ONLY the field's item_fields as keys. Split delimited text (commas, pipes, semicolons) into list items and remove duplicates. Leave out entries you cannot fill.
+- Company fields (company_*) describe the company the professional works for; person fields describe the person. Decide from the surrounding path and record which one a source field belongs to.
+
+Output rules:
+
+- Every source field you were given (every field of the record, or every entry in FIELDS TO MAP) must appear in exactly one of the three lists below (a source field that maps to several canonical fields may appear several times in "mappings").
+- "mappings": status "mapped". Sufficient evidence for a specific canonical field. target_field and target_value are required.
+- "ambiguous_fields": status "ambiguous". The field plausibly has a meaning in the schema but the name and value do not give enough evidence to choose. target_field is null (or your best candidate if you have one), target_value is null. Use a low confidence.
+- "unmapped_fields": status "unmapped". The field clearly has no counterpart in the canonical schema. target_field and target_value are null.
+- One source field may legitimately populate more than one canonical field (e.g. "Alice Smith" -> full_name, first_name, last_name). Emit one mapping entry per target field.
+- "confidence" is your own 0.0-1.0 estimate of how well the evidence supports the decision. It is not a calibrated probability.
+- "owner" is the owner of the chosen canonical field as given in the schema (null when there is no target field).
+- "etl_can_populate" is true only when status is "mapped" AND the crawler is an acceptable source for that canonical field according to its source_priority. Otherwise false.
+- When you are given FIELDS TO MAP instead of a single record, source_value and target_value refer to sample_values[0]; the same decision will be applied to all records that have the field.
+- "reason" is one or two sentences explaining the decision, citing the evidence you used.
+- "schema_version" must echo the schema version you were given.
+
+Approved mapping examples, when supplied, are context from past human review. They are evidence, not rules: the record in front of you decides.
+
+Return valid structured JSON only.
+
+
+=== USER MESSAGE ===
+CANONICAL SCHEMA (schema_version 2.0). These are the ONLY valid target fields:
+
+[
+ {
+  "field": "industry_unique_identifier",
+  "label": "Industry Unique Identifier",
+  "description": "Unique identifier of the professional in the industry / source system (for example an industry reference number).",
+  "data_type": "string",
+  "required": false,
+  "owner": "SYSTEM",
+  "source_priority": [
+   "system",
+   "crawler"
+  ]
+ },
+ {
+  "field": "source_url",
+  "label": "Source URL",
+  "description": "URL of the profile page this record was extracted from.",
+  "data_type": "url",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler"
+  ]
+ },
+ {
+  "field": "name",
+  "label": "Name",
+  "description": "Full name of the professional.",
+  "data_type": "string",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "title",
+  "label": "Title",
+  "description": "Job title or role label of the professional (for example Partner Agent or Broker Associate).",
+  "data_type": "string",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "display_picture",
+  "label": "Display Picture",
+  "description": "URL of the professional's profile photo, headshot or avatar.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "cover_image",
+  "label": "Cover Image",
+  "description": "URL of the cover, banner or hero image of the profile.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "about",
+  "label": "About",
+  "description": "Biography or self-description of the professional.",
+  "data_type": "string",
+  "required": false,
+  "owner": "PROFESSIONAL",
+  "source_priority": [
+   "professional",
+   "crawler"
+  ]
+ },
+ {
+  "field": "address_line_1",
+  "label": "Address Line 1",
+  "description": "Street address of the professional's office: street and number only, without city, state or zip.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "city",
+  "label": "City",
+  "description": "City of the professional's office address.",
+  "data_type": "string",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "state",
+  "label": "State",
+  "description": "State or region of the professional's office address (2-letter code when available).",
+  "data_type": "string",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "zipcode",
+  "label": "Zipcode",
+  "description": "Postal / ZIP code of the professional's office address, as text (keep leading zeros).",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "latitude",
+  "label": "Latitude",
+  "description": "Latitude of the professional's office location, as a decimal number.",
+  "data_type": "number",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "longitude",
+  "label": "Longitude",
+  "description": "Longitude of the professional's office location, as a decimal number.",
+  "data_type": "number",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "phone_office",
+  "label": "Office Phone",
+  "description": "Office or main business phone number of the professional.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "phone",
+  "label": "Phone",
+  "description": "Direct, mobile or cell phone number of the professional.",
+  "data_type": "string",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "fax",
+  "label": "Fax",
+  "description": "Fax number of the professional.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ]
+ },
+ {
+  "field": "email1",
+  "label": "Email",
+  "description": "Primary email address of the professional.",
+  "data_type": "email",
+  "required": true,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM",
+   "professional"
+  ]
+ },
+ {
+  "field": "website",
+  "label": "Website",
+  "description": "Personal or business website URL of the professional. Not a social network page and not the crawled profile page itself.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "professional"
+  ]
+ },
+ {
+  "field": "facebook_link",
+  "label": "Facebook Link",
+  "description": "URL of the professional's Facebook page.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "professional"
+  ]
+ },
+ {
+  "field": "linkedin_link",
+  "label": "LinkedIn Link",
+  "description": "URL of the professional's LinkedIn profile.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "professional"
+  ]
+ },
+ {
+  "field": "instagram_link",
+  "label": "Instagram Link",
+  "description": "URL of the professional's Instagram profile.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "professional"
+  ]
+ },
+ {
+  "field": "specialities",
+  "label": "Specialities",
+  "description": "Areas of expertise, focus areas or services the professional specializes in, as a list of short phrases.",
+  "data_type": "string_list",
+  "required": false,
+  "owner": "PROFESSIONAL",
+  "source_priority": [
+   "professional",
+   "crawler"
+  ]
+ },
+ {
+  "field": "licenses",
+  "label": "Licenses",
+  "description": "Professional license numbers held by the professional, as a list of license number strings.",
+  "data_type": "string_list",
+  "required": false,
+  "owner": "OTHER_SOURCE",
+  "source_priority": [
+   "regulatory_source",
+   "internal_system"
+  ]
+ },
+ {
+  "field": "positions",
+  "label": "Positions",
+  "description": "Work experience history: one entry per company the professional has worked for, each with company_name, title and year (for example a year or 'Present').",
+  "data_type": "object_list",
+  "required": false,
+  "owner": "PROFESSIONAL",
+  "source_priority": [
+   "professional",
+   "crawler"
+  ],
+  "item_fields": [
+   "company_name",
+   "title",
+   "year"
+  ]
+ },
+ {
+  "field": "operating_hours",
+  "label": "Operating Hours",
+  "description": "Weekly operating hours as a list with one entry per day: day, open (opening time) and close (closing time).",
+  "data_type": "object_list",
+  "required": false,
+  "owner": "PROFESSIONAL",
+  "source_priority": [
+   "professional",
+   "crawler"
+  ],
+  "item_fields": [
+   "day",
+   "open",
+   "close"
+  ]
+ },
+ {
+  "field": "years_of_experience",
+  "label": "Years of Experience",
+  "description": "Number of years of professional experience, as a whole number.",
+  "data_type": "integer",
+  "required": false,
+  "owner": "PROFESSIONAL",
+  "source_priority": [
+   "professional",
+   "crawler"
+  ]
+ },
+ {
+  "field": "company_name",
+  "label": "Company Name",
+  "description": "Name of the company, brokerage or firm the professional works for.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_address_line_1",
+  "label": "Company Address Line 1",
+  "description": "Street address of the company's office: street and number only.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_city",
+  "label": "Company City",
+  "description": "City of the company's office.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_state",
+  "label": "Company State",
+  "description": "State or region of the company's office.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_zipcode",
+  "label": "Company Zipcode",
+  "description": "Postal / ZIP code of the company's office, as text.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_email1",
+  "label": "Company Email",
+  "description": "Primary email address of the company.",
+  "data_type": "email",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_phone",
+  "label": "Company Phone",
+  "description": "Main phone number of the company.",
+  "data_type": "string",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_latitude",
+  "label": "Company Latitude",
+  "description": "Latitude of the company's office, as a decimal number.",
+  "data_type": "number",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_longitude",
+  "label": "Company Longitude",
+  "description": "Longitude of the company's office, as a decimal number.",
+  "data_type": "number",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_source_url",
+  "label": "Company Source URL",
+  "description": "URL of the page the company details were taken from.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_social_links.facebook",
+  "label": "Company Facebook",
+  "description": "URL of the company's Facebook page.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_social_links.instagram",
+  "label": "Company Instagram",
+  "description": "URL of the company's Instagram page.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_social_links.linkedin",
+  "label": "Company LinkedIn",
+  "description": "URL of the company's LinkedIn page.",
+  "data_type": "url",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company"
+ },
+ {
+  "field": "company_social_links.other",
+  "label": "Company Other Social Links",
+  "description": "Company profiles on any other social network (for example Twitter or Google My Business), as a list of entries with network and url.",
+  "data_type": "object_list",
+  "required": false,
+  "owner": "ETL",
+  "source_priority": [
+   "crawler",
+   "CRM"
+  ],
+  "group": "company",
+  "item_fields": [
+   "network",
+   "url"
+  ]
+ }
+]
+
+FIELDS TO MAP. Each entry is one distinct source field (a dotted path into the crawled record) seen across several records. Decide what each field means from its name, its sample values and the context records. For source_value and target_value use sample_values[0].
+
+[
+ {
+  "source_field": "record_id",
+  "records_with_field": 5,
+  "sample_values": [
+   "crawl_0001",
+   "crawl_0015",
+   "crawl_0019",
+   "crawl_0026",
+   "crawl_0027"
+  ]
+ },
+ {
+  "source_field": "fullName",
+  "records_with_field": 3,
+  "sample_values": [
+   "Nikki Rodio",
+   "Shana Stull",
+   "Angie Quebman"
+  ]
+ },
+ {
+  "source_field": "professional_title",
+  "records_with_field": 2,
+  "sample_values": [
+   "Partner Agent"
+  ]
+ },
+ {
+  "source_field": "profile_link",
+  "records_with_field": 2,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/nikki-rodio",
+   "https://www.redfin.com/real-estate-agents/dana-lam"
+  ]
+ },
+ {
+  "source_field": "photo",
+  "records_with_field": 4,
+  "sample_values": [
+   "https://ssl.cdn-redfin.com/system_files/images/59007/500x500/8_92.jpg",
+   "https://ssl.cdn-redfin.com/system_files/images/6098/150x150/1_49.jpg",
+   "https://ssl.cdn-redfin.com/system_files/images/12452/150x150/1_59.jpg",
+   "https://ssl.cdn-redfin.com/system_files/images/42898/150x150/1_13.jpg"
+  ]
+ },
+ {
+  "source_field": "ABOUT",
+  "records_with_field": 1,
+  "sample_values": [
+   "As a lifelong resident of the Antelope Valley, I bring a deep understanding and appreciation of our community to my real estate practice. I am passionate about helping families, investors, and business owners find the perfect properties that match their needs and dreams.With my years of experience, I bring a unique eye for potential in every home or commercial property, offering my clients tailored advice on how to maximize value, whether through home staging or renovations. I've built my career on trust, transparency, and a strong work ethic, guiding buyers and sellers through every step of the real estate process.When I'm not helping clients, I dedicate my time to volunteering and supporting local causes, including the Quartz Hill Chamber of Comerce and Innovation Education, a nonprofit tutoring organization. I am also a proud mom of two boys, which has given me a special connection to the family-oriented aspects of our community.Whether you're looking to buy, sell, or invest, I'm here to provide you with professional and personalized service. Let's make your real estate goals a reality!"
+  ]
+ },
+ {
+  "source_field": "location_info.town",
+  "records_with_field": 1,
+  "sample_values": [
+   "Lancaster"
+  ]
+ },
+ {
+  "source_field": "location_info.region",
+  "records_with_field": 1,
+  "sample_values": [
+   "CA"
+  ]
+ },
+ {
+  "source_field": "location_info.postal",
+  "records_with_field": 1,
+  "sample_values": [
+   "93534"
+  ]
+ },
+ {
+  "source_field": "officeLine",
+  "records_with_field": 1,
+  "sample_values": [
+   "6619459461"
+  ]
+ },
+ {
+  "source_field": "directline",
+  "records_with_field": 1,
+  "sample_values": [
+   "6614008511"
+  ]
+ },
+ {
+  "source_field": "email",
+  "records_with_field": 3,
+  "sample_values": [
+   "nikkirodiorealtor@gmail.com",
+   "jc@whisselrealty.com",
+   "zakk.varughese@gmail.com"
+  ]
+ },
+ {
+  "source_field": "Website",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://www.remax.com/real-estate-agents/lancaster-ca-93534-nikkirodio-id32013590.html"
+  ]
+ },
+ {
+  "source_field": "profileSource",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/nikki-rodio"
+  ]
+ },
+ {
+  "source_field": "SOCIALS",
+  "records_with_field": 1,
+  "sample_values": [
+   "[{\"name\": \"Facebook\", \"url\": \"https://www.facebook.com/Nikkirodiorealtor/?modal=admin_todo_tour\"}, {\"name\": \"LinkedIn\", \"url\": \"https://www.linkedin.com/in/nikki-rodio-b04b77195/\"}]"
+  ]
+ },
+ {
+  "source_field": "expertise",
+  "records_with_field": 4,
+  "sample_values": [
+   "Buyer's agent, Listing agent, Relocation specialist, relocation",
+   "Buyer's agent, Listing agent, Relocation specialist, Short sale specialist, Property Management, Landlord, all aspects of residential real estate, condominiums, downsizing, estates, family homes, first-time home buyers, investment, investment property, land, military, multi-family, new home construction, relocation, residential, residential sales, retirement, second home, second homes, sellers agent, short sales, upsizing, sellers, buyers, residential property, seller's agent",
+   "[\"Buyer's agent\", \"Listing agent\", \"Relocation specialist\", \"relocation\", \"investment properties\", \"rentals\"]",
+   "REALTOR® | realtor | new construction | sellers | buyers | residential property"
+  ]
+ },
+ {
+  "source_field": "LICENSING.LICENSE_NUMBER",
+  "records_with_field": 1,
+  "sample_values": [
+   "02091895"
+  ]
+ },
+ {
+  "source_field": "career_history",
+  "records_with_field": 2,
+  "sample_values": [
+   "[{\"company\": \"RE/MAX All-Pro\", \"title\": \"Agent\", \"city\": \"Lancaster\", \"status\": \"Present\"}]",
+   "[{\"company\": \"David Lyng Real Estate\", \"RoleTitle\": \"Agent\", \"city\": \"SCOTTS VALLEY\", \"tenure\": \"Present\"}]"
+  ]
+ },
+ {
+  "source_field": "data.recordkey",
+  "records_with_field": 1,
+  "sample_values": [
+   "crawl_0002"
+  ]
+ },
+ {
+  "source_field": "data.personname",
+  "records_with_field": 1,
+  "sample_values": [
+   "Andre Aragon"
+  ]
+ },
+ {
+  "source_field": "data.headline",
+  "records_with_field": 1,
+  "sample_values": [
+   "Partner Agent"
+  ]
+ },
+ {
+  "source_field": "data.industry_ref",
+  "records_with_field": 1,
+  "sample_values": [
+   "261555037"
+  ]
+ },
+ {
+  "source_field": "data.profile_url",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/andre-aragon"
+  ]
+ },
+ {
+  "source_field": "data.image_link",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://ssl.cdn-redfin.com/system_files/images/39767/150x150/1_64.jpg"
+  ]
+ },
+ {
+  "source_field": "data.banner_image",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://ap.rdcpix.com/331813953/445d32f41db7e64b71d8356e4418b2c0g-c0s.jpg"
+  ]
+ },
+ {
+  "source_field": "data.summary",
+  "records_with_field": 1,
+  "sample_values": [
+   "I am a full-time, full-service real estate agent with more than 20 years of experience in real estate marketing and photography. For sellers, I provide exceptional photos, videos, and 360 virtual tours to showcase properties at every price point. This helps to attract more qualified offers, and to sell your property faster and for more money. For buyers, I am the perfect blend of tech-savvy and old-school values. I pride myself on providing the personal time, care, attention, and resources you will need to navigate a first home purchase, a vacation home purchase, or for a primary residence or investment property purchase. I am with you every step of the way, both in person or via professional video tours, and online communication for local and out-of-state buyers."
+  ]
+ },
+ {
+  "source_field": "data.contact_points.phoneoffice",
+  "records_with_field": 1,
+  "sample_values": [
+   "813-288-0300"
+  ]
+ },
+ {
+  "source_field": "data.contact_points.phone",
+  "records_with_field": 1,
+  "sample_values": [
+   "(813) 602-5070"
+  ]
+ },
+ {
+  "source_field": "data.contact_points.e_mail",
+  "records_with_field": 1,
+  "sample_values": [
+   "aaragonrealtor@gmail.com"
+  ]
+ },
+ {
+  "source_field": "data.online_presence.homepage",
+  "records_with_field": 1,
+  "sample_values": [
+   "http://www.greaterstpeteagents.com/"
+  ]
+ },
+ {
+  "source_field": "data.online_presence.profile-source",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/andre-aragon"
+  ]
+ },
+ {
+  "source_field": "data.Social",
+  "records_with_field": 1,
+  "sample_values": [
+   "[{\"platform\": \"Facebook\", \"hyper_link\": \"https://www.facebook.com/Andre.R.Aragon.Realtor/\"}, {\"platform\": \"Twitter\", \"hyper_link\": \"https://twitter.com/St_Pete_Agent\"}]"
+  ]
+ },
+ {
+  "source_field": "data.expertise-tags",
+  "records_with_field": 1,
+  "sample_values": [
+   "Professional Real Estate Photography | Video and 360 Virtual Tours | buyer's agent | listing agent | buyers | sellers | residential property | investment properties | seller's agent"
+  ]
+ },
+ {
+  "source_field": "data.licensing.LIC_NO",
+  "records_with_field": 1,
+  "sample_values": [
+   "3379817"
+  ]
+ },
+ {
+  "source_field": "data.career",
+  "records_with_field": 1,
+  "sample_values": [
+   "[{\"brokerage\": \"Quicksilver Real Estate Group\", \"job_title\": \"Agent\", \"office_city\": \"St. Petersburg\", \"year\": \"Present\"}, {\"brokerage\": \"Forever Florida Real Estate\", \"job_title\": \"Agent\", \"city\": \"ST PETERSBURG\", \"tenure\": \"Present\"}]"
+  ]
+ },
+ {
+  "source_field": "data.company_legal_or_brand_name",
+  "records_with_field": 1,
+  "sample_values": [
+   "Quicksilver Real Estate Group"
+  ]
+ },
+ {
+  "source_field": "data.company_business-type",
+  "records_with_field": 1,
+  "sample_values": [
+   "Real Estate Brokerage"
+  ]
+ },
+ {
+  "source_field": "data.company_company_phone",
+  "records_with_field": 1,
+  "sample_values": [
+   "8132880300"
+  ]
+ },
+ {
+  "source_field": "data.company_company_website",
+  "records_with_field": 1,
+  "sample_values": [
+   "http://www.greaterstpeteagents.com/"
+  ]
+ },
+ {
+  "source_field": "data.company_dataSource",
+  "records_with_field": 1,
+  "sample_values": [
+   "company website / profile page"
+  ]
+ },
+ {
+  "source_field": "Id",
+  "records_with_field": 2,
+  "sample_values": [
+   "crawl_0003",
+   "crawl_0017"
+  ]
+ },
+ {
+  "source_field": "person_name",
+  "records_with_field": 3,
+  "sample_values": [
+   "Brian Preston",
+   "Terri Edgerley",
+   "Danielle Marchisella"
+  ]
+ },
+ {
+  "source_field": "designation",
+  "records_with_field": 2,
+  "sample_values": [
+   "Partner Agent"
+  ]
+ },
+ {
+  "source_field": "industry_ref",
+  "records_with_field": 7,
+  "sample_values": [
+   "997184574",
+   "768006588",
+   "249279343",
+   "396984742",
+   "183012593"
+  ]
+ },
+ {
+  "source_field": "source_url",
+  "records_with_field": 3,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/brianpreston",
+   "https://www.redfin.com/real-estate-agents/terri-edgerley",
+   "https://www.redfin.com/real-estate-agents/jc-agajanian"
+  ]
+ },
+ {
+  "source_field": "cover_image",
+  "records_with_field": 3,
+  "sample_values": [
+   "https://ap.rdcpix.com/3d70efbe4d695079dc981b10bf541be3g-c1455938077s.jpg",
+   "https://ap.rdcpix.com/1951396175/9c5ae97bcfcb2930ee873eb884ee5227g-c0s.jpg",
+   "https://ap.rdcpix.com/388855811d1965bf3bbc71375cbe6cd9g-c630321197s.jpg"
+  ]
+ },
+ {
+  "source_field": "BIO",
+  "records_with_field": 2,
+  "sample_values": [
+   "I have been selling real estate in the St Louis region for 17 years, it is an extremely fun and rewarding career. I do everything I can to make sure buying or selling a home is an enjoyable and exciting experience. My past clients appreciate how thoroughly I explain the process of buying or selling a home so there are no surprises. One of the keys to my success is to be available. It is a must because real estate is very much a time sensitive business. You can count on me to negotiate for you and always have your best interests in mind. As a buyer's agent I have extensive knowledge in the St Louis real estate market including single family homes, condominiums and multi-family investment properties. As a seller's agent I have extensive marketing systems in place that I will tailor to your specific property to get it sold FAST!Connect with me today for a FREE, no obligation, no pressure buyer or seller consultation!",
+   "I base my success on my client's happiness after a transaction. At every step, I make sure my clients know I'm 100% there for them--no matter how short or long it takes--to find their dream home! I also have a knack for technology and love teaching my clients how to best utilize the Redfin app to aid our search and share comments on properties. I pride myself on my expert market knowledge and outstanding customer service. I'm proud to say that a high percentage of my business comes from past clients who not only come back, but also refer me to their friends and family."
+  ]
+ },
+ {
+  "source_field": "address_line1",
+  "records_with_field": 1,
+  "sample_values": [
+   "12400 Olive Blvd Suite 203"
+  ]
+ },
+ {
+  "source_field": "town",
+  "records_with_field": 3,
+  "sample_values": [
+   "Creve Coeur",
+   "Underhill",
+   "Cumming"
+  ]
+ },
+ {
+  "source_field": "state_code",
+  "records_with_field": 2,
+  "sample_values": [
+   "MO",
+   "CA"
+  ]
+ },
+ {
+  "source_field": "postalcode",
+  "records_with_field": 1,
+  "sample_values": [
+   "63141"
+  ]
+ },
+ {
+  "source_field": "office_line",
+  "records_with_field": 2,
+  "sample_values": [
+   "3143800581",
+   "6192249898"
+  ]
+ },
+ {
+  "source_field": "directphone",
+  "records_with_field": 1,
+  "sample_values": [
+   "314-369-4743"
+  ]
+ },
+ {
+  "source_field": "email_address",
+  "records_with_field": 5,
+  "sample_values": [
+   "brian@brianprestonrealestate.com",
+   "brazeltonjaylynn@gmail.com",
+   "paul@patriotarizona.com",
+   "dana.lam@redfin.com",
+   "daniel@gilsonhomegroup.com"
+  ]
+ },
+ {
+  "source_field": "PersonalSite",
+  "records_with_field": 1,
+  "sample_values": [
+   "https://brian.explorestlouishomes.com"
+  ]
+ },
+ {
+  "source_field": "crawled_from",
+  "records_with_field": 4,
+  "sample_values": [
+   "https://www.redfin.com/real-estate-agents/brianpreston",
+   "https://www.redfin.com/real-estate-agents/kristy-hanson",
+   "https://www.redfin.com/real-estate-agents/jc-agajanian",
+   "https://www.redfin.com/real-estate-agents/angie-knight"
+  ]
+ },
+ {
+  "source_field": "social_links",
+  "records_with_field": 1,
+  "sample_values": [
+   "[{\"network\": \"Facebook\", \"url\": \"https://www.facebook.com/BrianPrestonRE/\"}, {\"network\": \"Twitter\", \"url\": \"http://twitter.com/BrianPrestonRE\"}, {\"network\": \"LinkedIn\", \"url\": \"http://BrianPrestonRE\"}]"
+  ]
+ },
+ {
+  "source_field": "licensing.licensenumber",
+  "records_with_field": 1,
+  "sample_values": [
+   "2001026901"
+  ]
+ },
+ {
+  "source_field": "employment-history",
+  "records_with_field": 1,
+  "sample_values": [
+   "[{\"employer\": \"Elevate Realty, LLC\", \"role-title\": \"VP/Missouri Operations/Broker\", \"office_city\": \"Creve Coeur\", \"status\": \"Present\"}, {\"employer\": \"PalmerHouse Properties & Associates LLC\", \"city\": \"St Louis\", \"tenure\": \"Present\"}]"
+  ]
+ },
+ {
+  "source_field": "company_legalorbrandname",
+  "records_with_field": 1,
+  "sample_values": [
+   "Elevate Realty, LLC"
+  ]
+ }
+]
+
+CONTEXT RECORDS (whole records that contain some of these fields, for surrounding-field context only; do NOT map them):
+
+[
+ {
+  "record_index": 1,
+  "record": {
+   "data.recordkey": "crawl_0002",
+   "data.personname": "Andre Aragon",
+   "data.headline": "Partner Agent",
+   "data.industry_ref": "261555037",
+   "data.profile_url": "https://www.redfin.com/real-estate-agents/andre-aragon",
+   "data.image_link": "https://ssl.cdn-redfin.com/system_files/images/39767/150x150/1_64.jpg",
+   "data.banner_image": "https://ap.rdcpix.com/331813953/445d32f41db7e64b71d8356e4418b2c0g-c0s.jpg",
+   "data.summary": "I am a full-time, full-service real estate agent with more than 20 years of experience in real estate marketing and photography. For sellers, I provide exceptional photos, videos, and 360 virtual tours to showcase properties at every price point. This helps to attract more qualified offers, and to s",
+   "data.contact_points.phoneoffice": "813-288-0300",
+   "data.contact_points.phone": "(813) 602-5070",
+   "data.contact_points.e_mail": "aaragonrealtor@gmail.com",
+   "data.online_presence.homepage": "http://www.greaterstpeteagents.com/",
+   "data.online_presence.profile-source": "https://www.redfin.com/real-estate-agents/andre-aragon",
+   "data.Social": "[{\"platform\": \"Facebook\", \"hyper_link\": \"https://www.facebook.com/Andre.R.Aragon.Realtor/\"}, {\"platform\": \"Twitter\", \"hyper_link\": \"https://twitter.com/St_Pete_Agent\"}]",
+   "data.expertise-tags": "Professional Real Estate Photography | Video and 360 Virtual Tours | buyer's agent | listing agent | buyers | sellers | residential property | investment properties | seller's agent",
+   "data.licensing.LIC_NO": "3379817",
+   "data.career": "[{\"brokerage\": \"Quicksilver Real Estate Group\", \"job_title\": \"Agent\", \"office_city\": \"St. Petersburg\", \"year\": \"Present\"}, {\"brokerage\": \"Forever Florida Real Estate\", \"job_title\": \"Agent\", \"city\": \"ST PETERSBURG\", \"tenure\": \"Present\"}]",
+   "data.company_legal_or_brand_name": "Quicksilver Real Estate Group",
+   "data.company_business-type": "Real Estate Brokerage",
+   "data.company_company_phone": "8132880300",
+   "data.company_company_website": "http://www.greaterstpeteagents.com/",
+   "data.company_dataSource": "company website / profile page"
+  }
+ },
+ {
+  "record_index": 2,
+  "record": {
+   "Id": "crawl_0003",
+   "person_name": "Brian Preston",
+   "designation": "Partner Agent",
+   "industry_ref": "997184574",
+   "source_url": "https://www.redfin.com/real-estate-agents/brianpreston",
+   "photo": "https://ssl.cdn-redfin.com/system_files/images/6098/150x150/1_49.jpg",
+   "cover_image": "https://ap.rdcpix.com/3d70efbe4d695079dc981b10bf541be3g-c1455938077s.jpg",
+   "BIO": "I have been selling real estate in the St Louis region for 17 years, it is an extremely fun and rewarding career. I do everything I can to make sure buying or selling a home is an enjoyable and exciting experience. My past clients appreciate how thoroughly I explain the process of buying or selling ",
+   "address_line1": "12400 Olive Blvd Suite 203",
+   "town": "Creve Coeur",
+   "state_code": "MO",
+   "postalcode": "63141",
+   "office_line": "3143800581",
+   "directphone": "314-369-4743",
+   "email_address": "brian@brianprestonrealestate.com",
+   "PersonalSite": "https://brian.explorestlouishomes.com",
+   "crawled_from": "https://www.redfin.com/real-estate-agents/brianpreston",
+   "social_links": "[{\"network\": \"Facebook\", \"url\": \"https://www.facebook.com/BrianPrestonRE/\"}, {\"network\": \"Twitter\", \"url\": \"http://twitter.com/BrianPrestonRE\"}, {\"network\": \"LinkedIn\", \"url\": \"http://BrianPrestonRE\"}]",
+   "expertise": "Buyer's agent, Listing agent, Relocation specialist, Short sale specialist, Property Management, Landlord, all aspects of residential real estate, condominiums, downsizing, estates, family homes, first-time home buyers, investment, investment property, land, military, multi-family, new home construc",
+   "licensing.licensenumber": "2001026901",
+   "employment-history": "[{\"employer\": \"Elevate Realty, LLC\", \"role-title\": \"VP/Missouri Operations/Broker\", \"office_city\": \"Creve Coeur\", \"status\": \"Present\"}, {\"employer\": \"PalmerHouse Properties & Associates LLC\", \"city\": \"St Louis\", \"tenure\": \"Present\"}]",
+   "company_legalorbrandname": "Elevate Realty, LLC",
+   "company_BUSINESS_TYPE": "Real Estate Brokerage",
+   "company_location.street_address": "12400 Olive Blvd Suite 203",
+   "company_location.locality": "Creve Coeur",
+   "company_location.region": "MO",
+   "company_location.postal_code": "63141",
+   "company_main_phone": "3143800581",
+   "company_website": "https://brian.explorestlouishomes.com",
+   "company_data_source": "company website / profile page"
+  }
+ }
+]

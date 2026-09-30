@@ -22,7 +22,7 @@ export default function CanonicalProfile() {
       <div className="flex flex-wrap items-center gap-2">
         {recs.map((r, i) => (
           <button key={r.id} onClick={() => { setIdx(i); setLin(null); }} className={`rounded-lg border px-3 py-1.5 text-sm ${i === idx ? "border-indigo-600 bg-indigo-600 text-white" : "border-slate-300 bg-white text-slate-600"}`}>
-            {String(r.profile.full_name ?? `Record ${i + 1}`)}
+            {String(r.flat.name ?? `Record ${i + 1}`)}
           </button>
         ))}
       </div>
@@ -31,20 +31,20 @@ export default function CanonicalProfile() {
           {showJson ? <Json data={{ profile: rec.profile }} max="max-h-[32rem]" /> : (
             <dl className="divide-y divide-slate-100 text-sm">
               {schema.fields.map((f) => {
-                const key = f.field.split(".")[1];
-                const v = rec.profile[key];
+                const key = f.field;
+                const v = rec.flat[key];
                 const l = rec.lineage[key];
                 return (
                   <div key={f.field} className="py-2">
                     <div className="grid grid-cols-[150px_1fr_auto] items-start gap-3">
                       <dt className="text-slate-500">{f.label}</dt>
-                      <dd className={v === undefined ? "italic text-slate-300" : "text-slate-900"}>{v === undefined ? "not populated" : String(v)}</dd>
+                      <dd className={v === undefined ? "italic text-slate-300" : "text-slate-900"}>{v === undefined ? "not populated" : typeof v === "object" ? <pre className="whitespace-pre-wrap font-mono text-xs">{JSON.stringify(v, null, 1)}</pre> : String(v)}</dd>
                       <div className="flex items-center gap-2"><OwnerBadge owner={f.owner} />
                         {l && <button className="text-xs font-medium text-indigo-600" onClick={() => setLin(lin === key ? null : key)}>lineage</button>}</div>
                     </div>
                     {l && lin === key && (
                       <div className="mt-2 rounded-lg bg-slate-50 p-3 font-mono text-xs leading-relaxed text-slate-600">
-                        <div>profile.{key}</div><div>↓ source field: <b>{l.source_field}</b></div><div>↓ source value: {l.source_value}</div>
+                        <div>{key}</div><div>↓ source field: <b>{l.source_field}</b></div><div>↓ source value: {l.source_value}</div>
                         <div>↓ LLM: {l.model} · confidence {l.confidence.toFixed(2)}{l.review_state === "approved" ? " · human-approved" : ""}</div>
                         <div>↓ schema {l.schema_version} · prompt {l.prompt_version}</div><div>↓ mapping run: {l.mapping_run}{l.mapping_id ? ` · mapping #${l.mapping_id}` : ""}</div>
                       </div>

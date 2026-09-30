@@ -5,25 +5,27 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from .. import config
 from ..services import database as db
 from ..services.errors import UploadError
-from ..services.parser import parse_upload
+from ..services.parser import flatten_record, parse_upload
 
 router = APIRouter(prefix="/api")
 
 
-def _store(file_name: str, content: bytes, crawler_version: str | None, extraction_prompt_version: str | None) -> dict:
+def _store(file_name: str, content: bytes, crawler_version: str | None, extraction_prompt_version: str | None,
+           source_name: str | None = None) -> dict:
     try:
         parsed = parse_upload(file_name, content)
     except UploadError as e:
         raise HTTPException(400, {"code": e.code, "message": e.message})
-    records = parsed["records"]
-    fields = {k for r in records for k in r}
+    records = parsed["records"]  # raw, exactly as uploaded
+    flats = [flatten_record(r) for r in records]
+    fields = {k for f, _ in flats for k in f}
     with db.conn() as c:
         cur = c.execute(
             """INSERT INTO uploads(created_at, file_name, format, num_records, num_fields, fields_extracted, dropped_empty,
-               crawler_version, extraction_prompt_version, records_json) VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (db.now(), file_name, parsed["format"], len(records), len(fields), sum(len(r) for r in records),
-             parsed["dropped_empty"], crawler_version or "unspecified", extraction_prompt_version or "unspecified",
-             json.dumps(records, ensure_ascii=False)))
+               crawler_version, extraction_prompt_version, source_name, records_json) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (db.now(), file_name, parsed["format"], len(records), len(fields), sum(len(f) for f, _ in flats),
+             sum(d for _, d in flats), crawler_version or "unspecified", extraction_prompt_version or "unspecified",
+             source_name or file_name, json.dumps(records, ensure_ascii=False)))
         upload_id = cur.lastrowid
     return get_upload(upload_id)
 
@@ -37,7 +39,7 @@ def get_upload(upload_id: int, with_records: bool = True) -> dict:
     if with_records:
         counts: dict = {}
         for r in records:
-            for k in r:
+            for k in flatten_record(r)[0]:
                 counts[k] = counts.get(k, 0) + 1
         up["records"] = records
         up["fields"] = [{"field": k, "records": v} for k, v in sorted(counts.items())]
@@ -45,8 +47,10 @@ def get_upload(upload_id: int, with_records: bool = True) -> dict:
 
 
 @router.post("/upload")
-async def upload(file: UploadFile = File(...), crawler_version: str = Form(""), extraction_prompt_version: str = Form("")):
-    return _store(file.filename or "upload", await file.read(), crawler_version.strip() or None, extraction_prompt_version.strip() or None)
+async def upload(file: UploadFile = File(...), crawler_version: str = Form(""), extraction_prompt_version: str = Form(""),
+                 source_name: str = Form("")):
+    return _store(file.filename or "upload", await file.read(), crawler_version.strip() or None,
+                  extraction_prompt_version.strip() or None, source_name.strip() or None)
 
 
 @router.post("/upload/sample")

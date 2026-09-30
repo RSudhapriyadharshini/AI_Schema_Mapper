@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS uploads (
   dropped_empty INTEGER NOT NULL DEFAULT 0,
   crawler_version TEXT,
   extraction_prompt_version TEXT,
+  source_name TEXT,
   records_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS mapping_runs (
@@ -41,7 +42,9 @@ CREATE TABLE IF NOT EXISTS mapping_runs (
   use_examples INTEGER NOT NULL DEFAULT 1,
   error_type TEXT,
   error_message TEXT,
-  mapping_mode TEXT
+  mapping_mode TEXT,
+  source_name TEXT,
+  schema_json TEXT
 );
 CREATE TABLE IF NOT EXISTS run_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -127,11 +130,25 @@ CREATE TABLE IF NOT EXISTS source_mappings (
   updated_at TEXT NOT NULL,
   times_reused INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS field_decisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  decisions_json TEXT NOT NULL,
+  model TEXT,
+  schema_version TEXT,
+  prompt_version TEXT,
+  created_run_id INTEGER,
+  updated_at TEXT NOT NULL,
+  times_reused INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(source_name, path)
+);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 # Columns added after the first release; applied to databases created earlier.
-MIGRATIONS = [("field_mappings", "origin", "TEXT"), ("mapping_runs", "mapping_mode", "TEXT"), ("llm_calls", "purpose", "TEXT")]
+MIGRATIONS = [("field_mappings", "origin", "TEXT"), ("mapping_runs", "mapping_mode", "TEXT"), ("llm_calls", "purpose", "TEXT"),
+              ("uploads", "source_name", "TEXT"), ("mapping_runs", "source_name", "TEXT"), ("mapping_runs", "schema_json", "TEXT")]
 
 RUN_SELECT = """SELECT r.*,
   (SELECT COUNT(*) FROM llm_calls c WHERE c.run_id = r.id) AS llm_requests,

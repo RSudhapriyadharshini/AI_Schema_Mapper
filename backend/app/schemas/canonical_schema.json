@@ -1,25 +1,539 @@
 {
-  "schema_version": "1.0",
-  "owners": ["ETL", "PROFESSIONAL", "OTHER_SOURCE", "SYSTEM"],
-  "fields": [
-    {"field": "profile.first_name", "label": "First Name", "description": "Given name of the professional.", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.last_name", "label": "Last Name", "description": "Family name / surname of the professional.", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.full_name", "label": "Full Name", "description": "Full display name of the professional (first and last name together).", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.email", "label": "Email", "description": "Primary email address of the professional.", "data_type": "email", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.phone", "label": "Phone", "description": "Primary phone number for the professional.", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.title", "label": "Title", "description": "Job title or professional role of the person (e.g. Senior Loan Officer).", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.company", "label": "Company", "description": "Organization, brokerage, agency or employer the professional works for.", "data_type": "string", "required": true, "owner": "ETL", "source_priority": ["crawler", "CRM", "professional"]},
-    {"field": "profile.website", "label": "Website", "description": "Personal or business website URL of the professional (not a social network profile).", "data_type": "url", "required": false, "owner": "ETL", "source_priority": ["crawler", "professional"]},
-    {"field": "profile.linkedin", "label": "LinkedIn", "description": "LinkedIn profile URL of the professional.", "data_type": "url", "required": false, "owner": "ETL", "source_priority": ["crawler", "professional"]},
-    {"field": "profile.address", "label": "Address", "description": "Street address of the professional's office (street line only, without city/state/zip).", "data_type": "string", "required": false, "owner": "ETL", "source_priority": ["crawler", "CRM"]},
-    {"field": "profile.city", "label": "City", "description": "City of the professional's office address.", "data_type": "string", "required": false, "owner": "ETL", "source_priority": ["crawler", "CRM"]},
-    {"field": "profile.state", "label": "State", "description": "State or region of the professional's office address (2-letter code preferred).", "data_type": "string", "required": false, "owner": "ETL", "source_priority": ["crawler", "CRM"]},
-    {"field": "profile.zip_code", "label": "ZIP Code", "description": "Postal / ZIP code of the professional's office address.", "data_type": "string", "required": false, "owner": "ETL", "source_priority": ["crawler", "CRM"]},
-    {"field": "profile.bio", "label": "Bio", "description": "Professional biography describing the person's background and experience.", "data_type": "string", "required": false, "owner": "PROFESSIONAL", "source_priority": ["professional", "crawler"]},
-    {"field": "profile.specialties", "label": "Specialties", "description": "Areas of expertise, products or services the professional specializes in.", "data_type": "string", "required": false, "owner": "PROFESSIONAL", "source_priority": ["professional", "crawler"]},
-    {"field": "profile.service_area", "label": "Service Area", "description": "Geographic areas (cities, counties, regions) the professional serves.", "data_type": "string", "required": false, "owner": "PROFESSIONAL", "source_priority": ["professional", "crawler"]},
-    {"field": "profile.years_experience", "label": "Years of Experience", "description": "Number of years of professional experience, as a whole number.", "data_type": "integer", "required": false, "owner": "PROFESSIONAL", "source_priority": ["professional", "crawler"]},
-    {"field": "profile.license_number", "label": "License Number", "description": "Professional license number issued by a regulator.", "data_type": "string", "required": false, "owner": "OTHER_SOURCE", "source_priority": ["regulatory_source", "internal_system"]},
-    {"field": "profile.profile_image", "label": "Profile Image", "description": "URL of the professional's profile photo / headshot.", "data_type": "url", "required": false, "owner": "SYSTEM", "source_priority": ["system", "crawler"]}
-  ]
+ "schema_version": "2.0",
+ "owners": [
+  "ETL",
+  "PROFESSIONAL",
+  "OTHER_SOURCE",
+  "SYSTEM"
+ ],
+ "notes": "List-typed fields (string_list, object_list) are exchanged as JSON-encoded strings. Fields with group=company are assembled into profile.company[0].",
+ "fields": [
+  {
+   "field": "industry_unique_identifier",
+   "label": "Industry Unique Identifier",
+   "description": "Unique identifier of the professional in the industry / source system (for example an industry reference number).",
+   "data_type": "string",
+   "required": false,
+   "owner": "SYSTEM",
+   "source_priority": [
+    "system",
+    "crawler"
+   ]
+  },
+  {
+   "field": "source_url",
+   "label": "Source URL",
+   "description": "URL of the profile page this record was extracted from.",
+   "data_type": "url",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler"
+   ]
+  },
+  {
+   "field": "name",
+   "label": "Name",
+   "description": "Full name of the professional.",
+   "data_type": "string",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "title",
+   "label": "Title",
+   "description": "Job title or role label of the professional (for example Partner Agent or Broker Associate).",
+   "data_type": "string",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "display_picture",
+   "label": "Display Picture",
+   "description": "URL of the professional's profile photo, headshot or avatar.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "cover_image",
+   "label": "Cover Image",
+   "description": "URL of the cover, banner or hero image of the profile.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "about",
+   "label": "About",
+   "description": "Biography or self-description of the professional.",
+   "data_type": "string",
+   "required": false,
+   "owner": "PROFESSIONAL",
+   "source_priority": [
+    "professional",
+    "crawler"
+   ]
+  },
+  {
+   "field": "address_line_1",
+   "label": "Address Line 1",
+   "description": "Street address of the professional's office: street and number only, without city, state or zip.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "city",
+   "label": "City",
+   "description": "City of the professional's office address.",
+   "data_type": "string",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "state",
+   "label": "State",
+   "description": "State or region of the professional's office address (2-letter code when available).",
+   "data_type": "string",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "zipcode",
+   "label": "Zipcode",
+   "description": "Postal / ZIP code of the professional's office address, as text (keep leading zeros).",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "latitude",
+   "label": "Latitude",
+   "description": "Latitude of the professional's office location, as a decimal number.",
+   "data_type": "number",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "longitude",
+   "label": "Longitude",
+   "description": "Longitude of the professional's office location, as a decimal number.",
+   "data_type": "number",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "phone_office",
+   "label": "Office Phone",
+   "description": "Office or main business phone number of the professional.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "phone",
+   "label": "Phone",
+   "description": "Direct, mobile or cell phone number of the professional.",
+   "data_type": "string",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "fax",
+   "label": "Fax",
+   "description": "Fax number of the professional.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ]
+  },
+  {
+   "field": "email1",
+   "label": "Email",
+   "description": "Primary email address of the professional.",
+   "data_type": "email",
+   "required": true,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM",
+    "professional"
+   ]
+  },
+  {
+   "field": "website",
+   "label": "Website",
+   "description": "Personal or business website URL of the professional. Not a social network page and not the crawled profile page itself.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "professional"
+   ]
+  },
+  {
+   "field": "facebook_link",
+   "label": "Facebook Link",
+   "description": "URL of the professional's Facebook page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "professional"
+   ]
+  },
+  {
+   "field": "linkedin_link",
+   "label": "LinkedIn Link",
+   "description": "URL of the professional's LinkedIn profile.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "professional"
+   ]
+  },
+  {
+   "field": "instagram_link",
+   "label": "Instagram Link",
+   "description": "URL of the professional's Instagram profile.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "professional"
+   ]
+  },
+  {
+   "field": "specialities",
+   "label": "Specialities",
+   "description": "Areas of expertise, focus areas or services the professional specializes in, as a list of short phrases.",
+   "data_type": "string_list",
+   "required": false,
+   "owner": "PROFESSIONAL",
+   "source_priority": [
+    "professional",
+    "crawler"
+   ]
+  },
+  {
+   "field": "licenses",
+   "label": "Licenses",
+   "description": "Professional license numbers held by the professional, as a list of license number strings.",
+   "data_type": "string_list",
+   "required": false,
+   "owner": "OTHER_SOURCE",
+   "source_priority": [
+    "regulatory_source",
+    "internal_system"
+   ]
+  },
+  {
+   "field": "positions",
+   "label": "Positions",
+   "description": "Work experience history: one entry per company the professional has worked for, each with company_name, title and year (for example a year or 'Present').",
+   "data_type": "object_list",
+   "required": false,
+   "owner": "PROFESSIONAL",
+   "source_priority": [
+    "professional",
+    "crawler"
+   ],
+   "item_fields": [
+    "company_name",
+    "title",
+    "year"
+   ]
+  },
+  {
+   "field": "operating_hours",
+   "label": "Operating Hours",
+   "description": "Weekly operating hours as a list with one entry per day: day, open (opening time) and close (closing time).",
+   "data_type": "object_list",
+   "required": false,
+   "owner": "PROFESSIONAL",
+   "source_priority": [
+    "professional",
+    "crawler"
+   ],
+   "item_fields": [
+    "day",
+    "open",
+    "close"
+   ]
+  },
+  {
+   "field": "years_of_experience",
+   "label": "Years of Experience",
+   "description": "Number of years of professional experience, as a whole number.",
+   "data_type": "integer",
+   "required": false,
+   "owner": "PROFESSIONAL",
+   "source_priority": [
+    "professional",
+    "crawler"
+   ]
+  },
+  {
+   "field": "company_name",
+   "label": "Company Name",
+   "description": "Name of the company, brokerage or firm the professional works for.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_address_line_1",
+   "label": "Company Address Line 1",
+   "description": "Street address of the company's office: street and number only.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_city",
+   "label": "Company City",
+   "description": "City of the company's office.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_state",
+   "label": "Company State",
+   "description": "State or region of the company's office.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_zipcode",
+   "label": "Company Zipcode",
+   "description": "Postal / ZIP code of the company's office, as text.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_email1",
+   "label": "Company Email",
+   "description": "Primary email address of the company.",
+   "data_type": "email",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_phone",
+   "label": "Company Phone",
+   "description": "Main phone number of the company.",
+   "data_type": "string",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_latitude",
+   "label": "Company Latitude",
+   "description": "Latitude of the company's office, as a decimal number.",
+   "data_type": "number",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_longitude",
+   "label": "Company Longitude",
+   "description": "Longitude of the company's office, as a decimal number.",
+   "data_type": "number",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_source_url",
+   "label": "Company Source URL",
+   "description": "URL of the page the company details were taken from.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.facebook",
+   "label": "Company Facebook",
+   "description": "URL of the company's Facebook page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.instagram",
+   "label": "Company Instagram",
+   "description": "URL of the company's Instagram page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.linkedin",
+   "label": "Company LinkedIn",
+   "description": "URL of the company's LinkedIn page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.other",
+   "label": "Company Other Social Links",
+   "description": "Company profiles on any other social network (for example Twitter or Google My Business), as a list of entries with network and url.",
+   "data_type": "object_list",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company",
+   "item_fields": [
+    "network",
+    "url"
+   ]
+  },
+  {
+   "field": "company_website",
+   "label": "Company Website",
+   "description": "URL of the company's website.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  }
+ ]
 }

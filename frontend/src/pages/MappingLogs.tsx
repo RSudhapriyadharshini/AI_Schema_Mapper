@@ -29,7 +29,7 @@ export default function MappingLogs() {
             {calls.map((c) => (
               <Fragment key={c.id}>
                 <tr>
-                  <td className="px-3 py-2">{c.record_index + 1}</td><td className="px-3 py-2 text-xs text-slate-500">{c.purpose === "normalize" ? "apply saved mapping" : "map fields"}</td><td className="px-3 py-2">{c.attempt}</td>
+                  <td className="px-3 py-2">{c.record_index + 1}</td><td className="px-3 py-2 text-xs text-slate-500">{c.purpose === "normalize" ? "derive values" : c.purpose === "map_fields" ? "decide fields" : "map record"}</td><td className="px-3 py-2">{c.attempt}</td>
                   <td className="px-3 py-2"><Badge kind={c.status === "ok" ? "mapped" : c.status === "invalid" ? "ambiguous" : "missing"}>{c.status}</Badge>{c.error && <span className="ml-2 text-xs text-rose-600">{c.error.slice(0, 80)}</span>}</td>
                   <td className="px-3 py-2 text-slate-500">{c.stop_reason ?? "—"}</td>
                   <td className="px-3 py-2 tabular-nums">{c.input_tokens ?? "—"} / {c.output_tokens ?? "—"}</td>

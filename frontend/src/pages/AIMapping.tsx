@@ -42,6 +42,7 @@ export default function AIMapping() {
   const data = useAsync(() => (runId ? api.mappings(runId) : Promise.resolve(null)), [runId, version]);
   const examples = useAsync(() => api.examples(), [examplesVersion, version]);
   const saved = useAsync(() => api.sourceMappings(), [examplesVersion, version]);
+  const fieldDec = useAsync(() => api.fieldDecisions(), [examplesVersion, version]);
 
   if (!run) return <Empty>No mapping run yet. Go to Source Data or Dashboard to run one.</Empty>;
   if (data.error) return <ErrorBox>{data.error}</ErrorBox>;
@@ -107,7 +108,25 @@ export default function AIMapping() {
         </Table>
       </Card>
 
-      <Card title="Saved source mappings (Claude decides once per source, then the decision is reused)">
+      <Card title="Saved field decisions (Claude decides once per distinct source field, then the decision is reused)">
+        {(fieldDec.data ?? []).length === 0 ? <p className="text-sm text-slate-400">None yet. They are saved when a run uses “map each distinct field once”.</p> : (() => {
+          const bySource = new Map<string, { n: number; reused: number; model: string }>();
+          fieldDec.data!.forEach((d) => { const c = bySource.get(d.source_name) ?? { n: 0, reused: 0, model: d.model }; c.n += 1; c.reused += d.times_reused; bySource.set(d.source_name, c); });
+          return (
+            <Table head={["Source", "Saved field decisions", "Times reused", "Decided by", ""]}>
+              {[...bySource.entries()].map(([name, c]) => (
+                <tr key={name}>
+                  <td className="px-3 py-2 font-medium">{name}</td><td className="px-3 py-2 tabular-nums">{c.n}</td>
+                  <td className="px-3 py-2 tabular-nums">{c.reused}</td><td className="px-3 py-2 text-xs text-slate-500">{c.model}</td>
+                  <td className="px-3 py-2 text-right"><button className="text-xs text-rose-600" onClick={async () => { await api.forgetFieldDecisions(name); setEV((v) => v + 1); }}>forget</button></td>
+                </tr>
+              ))}
+            </Table>
+          );
+        })()}
+      </Card>
+
+      <Card title="Saved source mappings (one sample record per source, then reused)">
         {(saved.data ?? []).length === 0 ? <p className="text-sm text-slate-400">None yet. They are saved when a run maps a source in “map once per source” mode.</p> : (
           <Table head={["Source (field-name signature)", "Fields", "Decisions", "Decided by", "Reused", ""]}>
             {saved.data!.map((s) => (

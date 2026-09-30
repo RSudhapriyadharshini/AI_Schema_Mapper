@@ -1,5 +1,5 @@
 import type {
-  ApprovedExample, CanonicalRecord, MappingMode, SourceMapping, CanonicalSchema, Coverage, Health, LlmCall, Mapping, Run, Step, Thresholds, Upload,
+  ApprovedExample, CanonicalRecord, FieldDecision, MappingMode, SourceMapping, CanonicalSchema, Coverage, Health, LlmCall, Mapping, Run, Step, Thresholds, Upload,
 } from "../types";
 
 export class ApiError extends Error {
@@ -29,9 +29,9 @@ export const api = {
   schema: () => req<CanonicalSchema>("/schema"),
   settings: () => req<Thresholds>("/settings"),
   saveSettings: (t: Thresholds) => req<Thresholds>("/settings", json("PUT", t)),
-  uploadFile: (file: File, crawler: string, extraction: string) => {
+  uploadFile: (file: File, crawler: string, extraction: string, sourceName: string) => {
     const fd = new FormData();
-    fd.append("file", file); fd.append("crawler_version", crawler); fd.append("extraction_prompt_version", extraction);
+    fd.append("file", file); fd.append("crawler_version", crawler); fd.append("extraction_prompt_version", extraction); fd.append("source_name", sourceName);
     return req<Upload>("/upload", { method: "POST", body: fd });
   },
   loadSample: () => req<Upload>("/upload/sample", { method: "POST" }),
@@ -39,6 +39,8 @@ export const api = {
   listUploads: () => req<{ id: number }[]>("/uploads"),
   startRun: (upload_id: number, use_approved_examples: boolean, mapping_mode: MappingMode) =>
     req<{ run_id: number }>("/runs", json("POST", { upload_id, use_approved_examples, mapping_mode })),
+  fieldDecisions: () => req<FieldDecision[]>("/field-decisions"),
+  forgetFieldDecisions: (source: string) => req<{ ok: boolean }>(`/field-decisions?source_name=${encodeURIComponent(source)}`, { method: "DELETE" }),
   sourceMappings: () => req<SourceMapping[]>("/source-mappings"),
   deleteSourceMapping: (id: number) => req<{ ok: boolean }>(`/source-mappings/${id}`, { method: "DELETE" }),
   runs: () => req<Run[]>("/runs"),
