@@ -47,7 +47,7 @@ export default function CoverageAnalysis() {
             </tr>
           ))}
         </Table>
-        <p className="mt-2 text-[11px] text-slate-400">“ETL can populate” is the LLM’s judgement against each field’s <code>source_priority</code> (is the crawler an accepted source?). A field can hold a crawler value yet be “No” when the crawler is not an accepted source.</p>
+        <p className="mt-2 text-[11px] text-slate-400">“ETL can populate” is computed from each field’s <code>source_priority</code> in the schema (is the crawler an accepted source?). A field can hold a crawler value yet be “No” when the crawler is not an accepted source.</p>
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">

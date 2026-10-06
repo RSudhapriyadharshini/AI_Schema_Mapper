@@ -19,7 +19,24 @@ CREATE TABLE IF NOT EXISTS uploads (
   crawler_version TEXT,
   extraction_prompt_version TEXT,
   source_name TEXT,
+  metadata_ignored INTEGER NOT NULL DEFAULT 0,
+  metadata_blocks TEXT,
   records_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS upload_records (
+  upload_id INTEGER NOT NULL,
+  idx INTEGER NOT NULL,
+  raw_json TEXT NOT NULL,
+  PRIMARY KEY (upload_id, idx)
+);
+CREATE TABLE IF NOT EXISTS upload_fields (
+  upload_id INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  records INTEGER NOT NULL,
+  samples_json TEXT NOT NULL,
+  first_raw TEXT,
+  examples_json TEXT NOT NULL,
+  PRIMARY KEY (upload_id, path)
 );
 CREATE TABLE IF NOT EXISTS mapping_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +61,9 @@ CREATE TABLE IF NOT EXISTS mapping_runs (
   error_message TEXT,
   mapping_mode TEXT,
   source_name TEXT,
-  schema_json TEXT
+  schema_json TEXT,
+  strict_no_llm INTEGER NOT NULL DEFAULT 0,
+  coverage_json TEXT
 );
 CREATE TABLE IF NOT EXISTS run_steps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,6 +126,8 @@ CREATE TABLE IF NOT EXISTS llm_calls (
   input_tokens INTEGER,
   output_tokens INTEGER,
   latency_ms INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS approved_mappings (
@@ -143,17 +164,27 @@ CREATE TABLE IF NOT EXISTS field_decisions (
   times_reused INTEGER NOT NULL DEFAULT 0,
   UNIQUE(source_name, path)
 );
+CREATE INDEX IF NOT EXISTS idx_fm_run_target ON field_mappings(mapping_run_id, target_field);
+CREATE INDEX IF NOT EXISTS idx_fm_run_record ON field_mappings(mapping_run_id, record_id);
+CREATE INDEX IF NOT EXISTS idx_cr_run ON canonical_records(mapping_run_id, record_id);
+CREATE INDEX IF NOT EXISTS idx_sr_run ON source_records(mapping_run_id, record_index);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 # Columns added after the first release; applied to databases created earlier.
 MIGRATIONS = [("field_mappings", "origin", "TEXT"), ("mapping_runs", "mapping_mode", "TEXT"), ("llm_calls", "purpose", "TEXT"),
-              ("uploads", "source_name", "TEXT"), ("mapping_runs", "source_name", "TEXT"), ("mapping_runs", "schema_json", "TEXT")]
+              ("uploads", "source_name", "TEXT"), ("mapping_runs", "source_name", "TEXT"), ("mapping_runs", "schema_json", "TEXT"),
+              ("mapping_runs", "strict_no_llm", "INTEGER NOT NULL DEFAULT 0"),
+              ("mapping_runs", "coverage_json", "TEXT"),
+              ("uploads", "metadata_ignored", "INTEGER NOT NULL DEFAULT 0"), ("uploads", "metadata_blocks", "TEXT"),
+              ("llm_calls", "cache_read_tokens", "INTEGER"), ("llm_calls", "cache_write_tokens", "INTEGER")]
 
 RUN_SELECT = """SELECT r.*,
   (SELECT COUNT(*) FROM llm_calls c WHERE c.run_id = r.id) AS llm_requests,
   (SELECT COALESCE(SUM(input_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS input_tokens,
-  (SELECT COALESCE(SUM(output_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS output_tokens
+  (SELECT COALESCE(SUM(output_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS output_tokens,
+  (SELECT COALESCE(SUM(cache_read_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS cache_read_tokens,
+  (SELECT COALESCE(SUM(cache_write_tokens), 0) FROM llm_calls c WHERE c.run_id = r.id) AS cache_write_tokens
   FROM mapping_runs r"""
 
 TABLES = ["mapping_runs", "source_records", "field_mappings", "canonical_records"]
@@ -256,17 +287,19 @@ def run_label(run_id: int) -> str:
     return f"RUN-{run_id:05d}"
 
 
+def status_counts(c, run_id: int) -> dict:
+    """Source-field-level counts (mapped > ambiguous > unmapped per record field), computed in SQL."""
+    rank = {3: "mapped", 2: "ambiguous", 1: "unmapped"}
+    out = {"mapped": 0, "ambiguous": 0, "unmapped": 0}
+    for best, n in c.execute(
+            """SELECT best, COUNT(*) FROM (
+                 SELECT MAX(CASE status WHEN 'mapped' THEN 3 WHEN 'ambiguous' THEN 2 ELSE 1 END) AS best
+                 FROM field_mappings WHERE mapping_run_id=? GROUP BY record_id, source_field) GROUP BY best""", (run_id,)):
+        out[rank[best]] = n
+    return out
+
+
 def refresh_run_counts(c, run_id: int) -> None:
-    """Recompute source-field-level counts (mapped > ambiguous > unmapped per record field)."""
-    r = rows(c, "SELECT record_id, source_field, status FROM field_mappings WHERE mapping_run_id=?", (run_id,))
-    best: dict = {}
-    rank = {"mapped": 3, "ambiguous": 2, "unmapped": 1}
-    for x in r:
-        k = (x["record_id"], x["source_field"])
-        if rank[x["status"]] > rank.get(best.get(k, ""), 0):
-            best[k] = x["status"]
-    counts = {"mapped": 0, "ambiguous": 0, "unmapped": 0}
-    for s in best.values():
-        counts[s] += 1
+    counts = status_counts(c, run_id)
     c.execute("UPDATE mapping_runs SET fields_mapped=?, fields_unmapped=?, fields_ambiguous=? WHERE id=?",
               (counts["mapped"], counts["unmapped"], counts["ambiguous"], run_id))

@@ -91,58 +91,54 @@ def display_value(v) -> str | None:
     return json.dumps(v, ensure_ascii=False) if isinstance(v, (list, dict)) else str(v)
 
 
-def source_field_status(mapping_rows: list[dict]) -> dict:
-    """(record_index, source_field) -> best status."""
-    best: dict = {}
-    for r in mapping_rows:
-        k = (r["record_index"], r["source_field"])
-        if RANK[r["status"]] > RANK.get(best.get(k, ""), 0):
-            best[k] = r["status"]
-    return best
+def coverage_from_db(c, run_id: int, schema: dict, n_records: int) -> dict:
+    """Coverage metrics computed with SQL aggregates over the stored mappings, so it works for very large runs.
 
+    A canonical field counts as populated in a record when that record has a mapped row for it with a usable
+    value (values were type-checked before they were stored).
+    """
+    from . import database as db
 
-def compute_coverage(schema: dict, mapping_rows: list[dict], canonicals: list[dict], num_records: int) -> dict:
-    """mapping_rows need record_index; canonicals is the list of {"profile": ..., "lineage": ...}."""
     fields = schema["fields"]
     total = len(fields)
+    usable_sql = "mapping_run_id=? AND status='mapped' AND target_field IS NOT NULL AND target_value IS NOT NULL AND TRIM(target_value) <> ''"
 
-    used = defaultdict(list)  # target_field -> mapped rows whose value is usable
-    for r in mapping_rows:
-        if r["status"] == "mapped" and r.get("target_field") and usable(r.get("target_value")):
-            used[r["target_field"]].append(r)
+    per = {r["target_field"]: r for r in db.rows(
+        c, f"SELECT target_field, COUNT(DISTINCT record_id) AS recs, MAX(etl_can_populate) AS etl FROM field_mappings WHERE {usable_sql} GROUP BY target_field", (run_id,))}
+    srcs: dict = defaultdict(dict)
+    for r in c.execute(f"SELECT target_field, source_field, COUNT(*) FROM field_mappings WHERE {usable_sql} GROUP BY target_field, source_field", (run_id,)):
+        srcs[r[0]][r[1]] = r[2]
 
     per_field = []
     for f in fields:
-        key = f["field"]
-        populated = sum(1 for c in canonicals if usable(c["flat"].get(key)))
-        srcs: dict = defaultdict(set)
-        for r in used[f["field"]]:
-            srcs[r["source_field"]].add(r["record_index"])
-        sample = display_value(next((c["flat"][key] for c in canonicals if usable(c["flat"].get(key))), None))
-        etl_ok = any(r["etl_can_populate"] for r in used[f["field"]])
-        status = "missing" if populated == 0 else ("populated" if populated == num_records else "partial")
+        st = per.get(f["field"])
+        populated = st["recs"] if st else 0
+        sample = None
+        if populated:
+            row = c.execute(f"SELECT target_value FROM field_mappings WHERE {usable_sql} AND target_field=? ORDER BY id LIMIT 1", (run_id, f["field"])).fetchone()
+            sample = row[0] if row else None
+        status = "missing" if populated == 0 else ("populated" if populated == n_records else "partial")
         per_field.append({
             "field": f["field"], "label": f["label"], "owner": f["owner"], "required": f["required"],
             "data_type": f["data_type"], "source_priority": f["source_priority"],
-            "source_fields": sorted(srcs), "records_populated": populated, "records_total": num_records,
-            "fill_rate": populated / num_records if num_records else 0.0,
-            "value_available": populated > 0, "etl_can_populate": etl_ok and populated > 0,
-            "status": status, "sample_value": sample,
+            "source_fields": sorted(srcs.get(f["field"], {})), "records_populated": populated, "records_total": n_records,
+            "fill_rate": populated / n_records if n_records else 0.0, "value_available": populated > 0,
+            "etl_can_populate": bool(st and st["etl"]) and populated > 0, "status": status, "sample_value": sample,
         })
 
     populated_fields = [p for p in per_field if p["value_available"]]
     etl_fields = [p for p in per_field if p["owner"] == "ETL"]
     etl_populated = [p for p in etl_fields if p["etl_can_populate"]]
-    required = [p for p in per_field if p["required"]]
+    required = [f["field"] for f in fields if f["required"]]
 
-    rec_scores = []
-    for c in canonicals:
-        n = sum(1 for f in fields if usable(c["flat"].get(f["field"])))
-        n_req = sum(1 for f in fields if f["required"] and usable(c["flat"].get(f["field"])))
-        rec_scores.append({"populated": n, "total": total, "required_populated": n_req, "required_total": len(required)})
-    avg = lambda xs: sum(xs) / len(xs) if xs else 0.0
-    completeness = avg([s["populated"] / total for s in rec_scores])
-    req_completeness = avg([s["required_populated"] / s["required_total"] for s in rec_scores if s["required_total"]])
+    pairs = c.execute(f"SELECT COUNT(*) FROM (SELECT DISTINCT record_id, target_field FROM field_mappings WHERE {usable_sql})", (run_id,)).fetchone()[0]
+    req_pairs = 0
+    if required:
+        marks = ",".join("?" * len(required))
+        req_pairs = c.execute(f"SELECT COUNT(*) FROM (SELECT DISTINCT record_id, target_field FROM field_mappings WHERE {usable_sql} AND target_field IN ({marks}))",
+                              (run_id, *required)).fetchone()[0]
+    completeness = pairs / (n_records * total) if n_records and total else 0.0
+    req_completeness = req_pairs / (n_records * len(required)) if n_records and required else 0.0
 
     ownership = []
     for owner in schema["owners"]:
@@ -152,30 +148,25 @@ def compute_coverage(schema: dict, mapping_rows: list[dict], canonicals: list[di
 
     missing = [{
         "field": p["field"], "label": p["label"], "owner": p["owner"], "required": p["required"],
-        "reason": "No source field was mapped to this canonical field." if p["owner"] != "OTHER_SOURCE"
-        else "No crawler data available.",
+        "reason": "No source field was mapped to this canonical field." if p["owner"] != "OTHER_SOURCE" else "No crawler data available.",
         "recommended_action": OWNER_ACTIONS[p["owner"]],
     } for p in per_field if not p["value_available"]]
 
-    reverse = []
-    for p in per_field:
-        counts: dict = defaultdict(int)
-        for r in used[p["field"]]:
-            counts[r["source_field"]] += 1
-        reverse.append({"field": p["field"], "label": p["label"], "sources": [{"source_field": k, "count": v} for k, v in sorted(counts.items())]})
+    reverse = [{"field": p["field"], "label": p["label"],
+                "sources": [{"source_field": k, "count": v} for k, v in sorted(srcs.get(p["field"], {}).items())]} for p in per_field]
 
-    sf = source_field_status(mapping_rows)
-    st = defaultdict(int)
-    for s in sf.values():
-        st[s] += 1
+    st = db.status_counts(c, run_id)
+    top = db.rows(c, """SELECT source_field, target_field, owner, COUNT(*) AS n, AVG(confidence) AS confidence FROM field_mappings
+                        WHERE mapping_run_id=? AND status='mapped' GROUP BY source_field, target_field, owner ORDER BY n DESC LIMIT 14""", (run_id,))
+    canonical_mappings = c.execute("SELECT COUNT(*) FROM field_mappings WHERE mapping_run_id=? AND status='mapped'", (run_id,)).fetchone()[0]
 
     return {
         "metrics": {
-            "profiles": num_records,
+            "profiles": n_records,
             "canonical_fields": total,
-            "fields_extracted": len(sf),
+            "fields_extracted": st["mapped"] + st["unmapped"] + st["ambiguous"],
             "fields_mapped": st["mapped"], "fields_unmapped": st["unmapped"], "fields_ambiguous": st["ambiguous"],
-            "canonical_mappings": sum(1 for r in mapping_rows if r["status"] == "mapped"),
+            "canonical_mappings": canonical_mappings,
             "populated_fields": len(populated_fields), "missing_fields": total - len(populated_fields),
             "field_coverage": len(populated_fields) / total if total else 0.0,
             "etl_owned_total": len(etl_fields), "etl_owned_populated": len(etl_populated),
@@ -184,9 +175,9 @@ def compute_coverage(schema: dict, mapping_rows: list[dict], canonicals: list[di
             "required_completeness": req_completeness,
             "required_total": len(required),
         },
-        "record_scores": rec_scores,
         "fields": per_field,
         "ownership": ownership,
         "missing": missing,
         "reverse_mapping": reverse,
+        "top_mappings": top,
     }

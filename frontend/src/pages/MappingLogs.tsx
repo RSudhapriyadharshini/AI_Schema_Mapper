@@ -25,7 +25,7 @@ export default function MappingLogs() {
       </Card>
       <Card title={`Claude API calls · ${run.llm_requests} request(s) for ${run.total_records} records`}>
         {calls.length === 0 ? <p className="text-sm text-slate-400">No calls logged for this run.</p> : (
-          <Table head={["Record", "Purpose", "Attempt", "Status", "Stop reason", "Tokens in/out", "Latency", ""]}>
+          <Table head={["Record", "Purpose", "Attempt", "Status", "Stop reason", "Tokens in/out", "Cache read/written", "Latency", ""]}>
             {calls.map((c) => (
               <Fragment key={c.id}>
                 <tr>
@@ -33,11 +33,12 @@ export default function MappingLogs() {
                   <td className="px-3 py-2"><Badge kind={c.status === "ok" ? "mapped" : c.status === "invalid" ? "ambiguous" : "missing"}>{c.status}</Badge>{c.error && <span className="ml-2 text-xs text-rose-600">{c.error.slice(0, 80)}</span>}</td>
                   <td className="px-3 py-2 text-slate-500">{c.stop_reason ?? "—"}</td>
                   <td className="px-3 py-2 tabular-nums">{c.input_tokens ?? "—"} / {c.output_tokens ?? "—"}</td>
+                  <td className="px-3 py-2 tabular-nums text-slate-500">{c.cache_read_tokens ?? "—"} / {c.cache_write_tokens ?? "—"}</td>
                   <td className="px-3 py-2 tabular-nums">{c.latency_ms ? `${(c.latency_ms / 1000).toFixed(1)}s` : "—"}</td>
                   <td className="px-3 py-2 text-right"><button className="text-xs font-medium text-indigo-600" onClick={() => setOpen(open === c.id ? null : c.id)}>{open === c.id ? "Hide" : "Request / response"}</button></td>
                 </tr>
                 {open === c.id && (
-                  <tr><td colSpan={8} className="px-3 pb-3"><div className="grid gap-3 lg:grid-cols-2">
+                  <tr><td colSpan={9} className="px-3 pb-3"><div className="grid gap-3 lg:grid-cols-2">
                     <div><div className="mb-1 text-xs font-semibold text-slate-400">REQUEST (messages)</div><pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-[11px] text-slate-100">{c.request_text}</pre></div>
                     <div><div className="mb-1 text-xs font-semibold text-slate-400">RESPONSE (raw from Claude)</div><pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-900 p-3 text-[11px] text-slate-100">{c.response_text ?? "—"}</pre></div>
                   </div></td></tr>

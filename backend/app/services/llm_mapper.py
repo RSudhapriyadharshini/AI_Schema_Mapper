@@ -36,21 +36,30 @@ def build_response_schema(schema: dict) -> dict:
     return rs
 
 
-def build_user_message(record: dict, record_index: int, schema: dict, examples: list[dict]) -> str:
-    parts = [
-        f"CANONICAL SCHEMA (schema_version {schema['schema_version']}). These are the ONLY valid target fields:",
-        json.dumps(schema["fields"], indent=1),
-    ]
-    if examples:
-        parts += [
-            "APPROVED MAPPING EXAMPLES from past human review (context only, not rules; the record below decides):",
-            json.dumps([{"source_field": e["source_field"], "target_field": e["target_field"], "example_value": e["example_value"]} for e in examples], indent=1),
-        ]
-    parts += [
+def _schema_block(schema: dict) -> str:
+    """The part of every request that never changes within a schema version. It is sent first and marked for
+    prompt caching, so the system prompt + this block are read from cache after the first request."""
+    return (f"CANONICAL SCHEMA (schema_version {schema['schema_version']}). These are the ONLY valid target fields:\n\n"
+            + json.dumps(schema["fields"], indent=1))
+
+
+def _examples_text(examples: list[dict]) -> list[str]:
+    if not examples:
+        return []
+    return ["APPROVED MAPPING EXAMPLES from past human review (context only, not rules; the record below decides):",
+            json.dumps([{"source_field": e["source_field"], "target_field": e["target_field"], "example_value": e["example_value"]} for e in examples], indent=1)]
+
+
+def _content(schema: dict, rest: list[str]) -> list[dict]:
+    """User message as two blocks: [schema, cache breakpoint] + [everything that varies per request]."""
+    return [{"type": "text", "text": _schema_block(schema), "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": "\n\n".join(rest)}]
+
+
+def build_user_message(record: dict, record_index: int, schema: dict, examples: list[dict]) -> list[dict]:
+    return _content(schema, _examples_text(examples) + [
         f"SOURCE RECORD (record_index {record_index}). Map every field in it:",
-        json.dumps(record, indent=1, ensure_ascii=False),
-    ]
-    return "\n\n".join(parts)
+        json.dumps(record, indent=1, ensure_ascii=False)])
 
 
 def _log_call(run_id, record_index, purpose, attempt, model, prompt_version, status, request_text, response_text=None,
@@ -58,17 +67,18 @@ def _log_call(run_id, record_index, purpose, attempt, model, prompt_version, sta
     with db.conn() as c:
         c.execute(
             """INSERT INTO llm_calls(run_id, record_index, purpose, attempt, model, prompt_version, status, error, request_text,
-               response_text, stop_reason, input_tokens, output_tokens, latency_ms, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               response_text, stop_reason, input_tokens, output_tokens, latency_ms, cache_read_tokens, cache_write_tokens, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (run_id, record_index, purpose, attempt, model, prompt_version, status, error, request_text, response_text,
-             stop_reason, getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None), latency_ms, db.now()),
+             stop_reason, getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None), latency_ms,
+             getattr(usage, "cache_read_input_tokens", None), getattr(usage, "cache_creation_input_tokens", None), db.now()),
         )
 
 
 def _request_json(client, *, run_id, record_index, purpose, model, prompt_version, system, user_text, response_schema,
                   validate, label, on_sent=None, on_response=None):
     """Call Claude for structured JSON, validate, and retry once with the validator's feedback."""
-    messages = [{"role": "user", "content": user_text}]
+    messages = [{"role": "user", "content": user_text}]  # user_text is a string, or a list of content blocks (schema block cached)
     output_config = {"format": {"type": "json_schema", "schema": response_schema}}
     if config.EFFORT:
         output_config["effort"] = config.EFFORT
@@ -198,30 +208,18 @@ def normalize_batch(client, run_id: int, items: list[tuple[int, dict]], decision
         on_sent=on_sent, on_response=on_response)
 
 
-def build_fields_message(paths: list[str], index: dict, flats: list[dict], schema: dict, examples: list[dict]) -> str:
-    parts = [
-        f"CANONICAL SCHEMA (schema_version {schema['schema_version']}). These are the ONLY valid target fields:",
-        json.dumps(schema["fields"], indent=1),
-    ]
-    if examples:
-        parts += [
-            "APPROVED MAPPING EXAMPLES from past human review (context only, not rules; the fields below decide):",
-            json.dumps([{"source_field": e["source_field"], "target_field": e["target_field"], "example_value": e["example_value"]} for e in examples], indent=1),
-        ]
-    from . import sources
-    parts += [
+def build_fields_message(paths: list[str], index: dict, contexts: list[dict], schema: dict, examples: list[dict]) -> list[dict]:
+    return _content(schema, _examples_text(examples) + [
         "FIELDS TO MAP. Each entry is one distinct source field (a dotted path into the crawled record) seen across several records. "
         "Decide what each field means from its name, its sample values and the context records. "
-        "For source_value and target_value use sample_values[0].",
-        json.dumps([{"source_field": p, "records_with_field": len(index[p]["records"]), "sample_values": index[p]["samples"]} for p in paths],
+        "target_value and the recipe refer to sample_values[0].",
+        json.dumps([{"source_field": p, "records_with_field": index[p]["count"], "sample_values": index[p]["samples"]} for p in paths],
                    indent=1, ensure_ascii=False),
         "CONTEXT RECORDS (whole records that contain some of these fields, for surrounding-field context only; do NOT map them):",
-        json.dumps(sources.context_records(paths, flats, index), indent=1, ensure_ascii=False),
-    ]
-    return "\n\n".join(parts)
+        json.dumps(contexts, indent=1, ensure_ascii=False)])
 
 
-def map_fields_chunk(client, run_id: int, chunk_no: int, paths: list[str], index: dict, flats: list[dict], schema: dict,
+def map_fields_chunk(client, run_id: int, chunk_no: int, paths: list[str], index: dict, contexts: list[dict], schema: dict,
                      examples: list[dict], thresholds: dict, on_sent=None, on_response=None) -> list[dict]:
     """Ask Claude what a group of distinct source fields means. Returns validated rows (one set per field)."""
     schema_fields = {f["field"]: f for f in schema["fields"]}
@@ -229,7 +227,7 @@ def map_fields_chunk(client, run_id: int, chunk_no: int, paths: list[str], index
     return _request_json(
         client, run_id=run_id, record_index=chunk_no, purpose="map_fields", model=config.MODEL,
         prompt_version=config.PROMPT_VERSION, system=_SYSTEM_PROMPT,
-        user_text=build_fields_message(paths, index, flats, schema, examples),
+        user_text=build_fields_message(paths, index, contexts, schema, examples),
         response_schema=build_response_schema(schema),
         validate=lambda parsed: validate_response(parsed, sample_record, schema_fields, thresholds),
         label=f"mapping fields chunk {chunk_no + 1} ({len(paths)} fields)", on_sent=on_sent, on_response=on_response)

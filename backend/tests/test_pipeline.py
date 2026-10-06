@@ -30,7 +30,7 @@ def client(tmp_path, monkeypatch):
 # stub "model" knowledge, keyed by source path (test only)
 RULES = {
     "agent_name": ["name"], "phone": ["phone"], "email": ["email1"], "brokerage": ["company_name"],
-    "years": ["years_of_experience"], "skills": ["specialities"], "loc.city": ["city"], "fax": ["fax"],
+    "years": ["years_of_experience"], "skills": ["specialities"], "loc.city": ["city"], "fax": ["fax"], "lic": ["licenses"],
 }
 AMBIGUOUS = {"contact"}
 
@@ -38,6 +38,8 @@ AMBIGUOUS = {"contact"}
 def _derive(value, target):
     if target == "years_of_experience":
         return re.match(r"\d+", str(value)).group(0)
+    if target == "licenses":
+        return json.dumps([str(value)])
     if target == "specialities":
         try:
             lst = json.loads(value)
@@ -50,34 +52,53 @@ def _derive(value, target):
 
 
 def _item(sf, v, tf, tv, conf, status):
-    return {"source_field": sf, "source_value": str(v), "target_field": tf, "target_value": tv, "confidence": conf,
-            "status": status, "reason": "stub", "owner": None, "etl_can_populate": status == "mapped"}
+    """A slim answer item: no echoed source_value / owner / etl_can_populate; target_value null when the value is copied."""
+    copy = status != "mapped" or str(tv) == str(v)
+    return {"source_field": sf, "target_field": tf, "target_value": None if copy else tv, "confidence": conf,
+            "status": status, "reason": "stub", "recipe": None}
 
 
-def _answer(fields: dict) -> dict:
+RECIPES = {  # what a good "model" would return as the recipe for a transformed field (test only)
+    "years_of_experience": [{"op": "first_number"}],
+    "specialities": [{"op": "split_list", "delimiters": [","]}],
+}
+
+
+def _answer(fields: dict, recipes: str = "none") -> dict:
     out = {"schema_version": "2.0", "mappings": [], "unmapped_fields": [], "ambiguous_fields": []}
     for f, v in fields.items():
         if f in AMBIGUOUS:
             out["ambiguous_fields"].append(_item(f, v, None, None, 0.4, "ambiguous"))
         elif f in RULES:
             for tf in RULES[f]:
-                out["mappings"].append(_item(f, v, tf, _derive(v, tf), 0.95, "mapped"))
+                it = _item(f, v, tf, _derive(v, tf), 0.95, "mapped")
+                if recipes == "good" and tf in RECIPES:
+                    it["recipe"] = json.dumps(RECIPES[tf])
+                elif recipes == "bad" and tf in RECIPES:
+                    it["recipe"] = json.dumps([{"op": "upper"}])  # does not reproduce the answer
+                out["mappings"].append(it)
         else:
             out["unmapped_fields"].append(_item(f, v, None, None, 0.9, "unmapped"))
     return out
 
 
-def _resp(payload):
+def _resp(payload, cache_read=0, cache_write=0):
     return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))], stop_reason="end_turn",
-                           usage=SimpleNamespace(input_tokens=10, output_tokens=20))
+                           usage=SimpleNamespace(input_tokens=10, output_tokens=20, cache_read_input_tokens=cache_read,
+                                                 cache_creation_input_tokens=cache_write))
+
+
+def _text(content):
+    return content if isinstance(content, str) else "\n\n".join(b["text"] for b in content)
 
 
 class StubClient:
     """Answers the three request kinds the app makes: one record, a list of fields, and value derivation."""
 
-    def __init__(self, mode="ok"):
-        self.mode = mode
+    def __init__(self, mode="ok", recipes="none"):
+        self.mode, self.recipes = mode, recipes
         self.record_calls = self.field_calls = self.norm_calls = 0
+        self.requests, self._cached_prefixes = [], set()
         self.messages = SimpleNamespace(create=self.create)
 
     @property
@@ -85,7 +106,9 @@ class StubClient:
         return self.record_calls + self.field_calls + self.norm_calls
 
     def create(self, **kw):
-        user = kw["messages"][0]["content"]
+        self.requests.append(kw)
+        content = kw["messages"][0]["content"]
+        user = _text(content)
         if "ALREADY been decided" in kw["system"]:
             self.norm_calls += 1
             req = json.loads(user)
@@ -97,20 +120,27 @@ class StubClient:
                         v = json.dumps(v) if isinstance(v, (list, dict)) else v
                         results.append({"record_index": rec["record_index"], "source_field": m["source_field"],
                                         "target_field": m["target_field"], "target_value": _derive(v, m["target_field"])})
-            if self.mode == "bad_norm":
+            if self.mode == "bad_norm" or (self.mode == "bad_norm_second" and self.norm_calls >= 2):
                 results = results[:1]
             return _resp({"results": results})
         if "FIELDS TO MAP" in user:
             self.field_calls += 1
             after = user.split("sample_values[0].\n\n", 1)[1]
             fields, _ = json.JSONDecoder().raw_decode(after)
-            payload = _answer({f["source_field"]: f["sample_values"][0] for f in fields})
+            payload = _answer({f["source_field"]: f["sample_values"][0] for f in fields}, self.recipes)
         else:
             self.record_calls += 1
             record = json.loads(user.split("Map every field in it:\n\n", 1)[1])
-            payload = _answer(record)
+            payload = _answer(record, self.recipes)
         if self.mode == "bad_field" or (self.mode == "bad_first" and self.total == 1):
             payload["mappings"][0]["target_field"] = "favorite_color"
+        # simulate prompt caching: the block marked cache_control is written once, then read
+        if isinstance(content, list) and content[0].get("cache_control"):
+            key = kw["system"] + content[0]["text"]
+            if key in self._cached_prefixes:
+                return _resp(payload, cache_read=4000)
+            self._cached_prefixes.add(key)
+            return _resp(payload, cache_write=4000)
         return _resp(payload)
 
 
@@ -150,9 +180,9 @@ def test_happy_path_in_every_mode(client, monkeypatch, mode):
     assert (st["run"]["fields_mapped"], st["run"]["fields_ambiguous"], st["run"]["fields_unmapped"]) == (5, 1, 1)
     schema = client.get("/api/schema").json()
     cov = client.get(f"/api/runs/{run_id}/coverage").json()["metrics"]
-    assert cov["canonical_fields"] == len(schema["fields"]) == 40
+    assert cov["canonical_fields"] == len(schema["fields"])
     assert cov["populated_fields"] == 3  # name, phone, email1
-    assert abs(cov["field_coverage"] - 3 / 40) < 1e-9
+    assert abs(cov["field_coverage"] - 3 / len(schema["fields"])) < 1e-9
     etl_total = sum(1 for f in schema["fields"] if f["owner"] == "ETL")
     assert cov["etl_owned_total"] == etl_total and cov["etl_owned_populated"] == 3
     canon = client.get(f"/api/runs/{run_id}/canonical").json()["records"][0]

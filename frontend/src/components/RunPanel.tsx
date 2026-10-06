@@ -9,6 +9,7 @@ export default function RunPanel({ compact = false }: { compact?: boolean }) {
   const { upload, setUpload, starting, startError, startRun, activeSteps, activeRun, runId, run, version } = useApp();
   const [useExamples, setUseExamples] = useState(true);
   const [mode, setMode] = useState<MappingMode>("per_field");
+  const [strict, setStrict] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const running = activeRun?.status === "running" || run?.status === "running";
@@ -28,7 +29,7 @@ export default function RunPanel({ compact = false }: { compact?: boolean }) {
         {!upload && <Button onClick={loadSample} disabled={loading}>Load Sample Crawler Data</Button>}
         {upload && (
           <>
-            <Button onClick={() => startRun(useExamples, mode)} disabled={starting || running}>{running ? "Mapping in progress…" : "Run AI Schema Mapping"}</Button>
+            <Button onClick={() => startRun(useExamples, mode, strict && mode === "per_field")} disabled={starting || running}>{running ? "Mapping in progress…" : "Run AI Schema Mapping"}</Button>
             <span className="text-xs text-slate-500">on <b>{upload.file_name}</b> ({upload.num_records} records, {upload.num_fields} source fields)</span>
             <select value={mode} onChange={(e) => setMode(e.target.value as MappingMode)} className="rounded border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700" title="How many Claude requests to make">
               <option value="per_field">Map each distinct field once (saved, recommended)</option>
@@ -37,6 +38,9 @@ export default function RunPanel({ compact = false }: { compact?: boolean }) {
               <option value="per_source_relearn">Map one sample record per source, ignore saved</option>
               <option value="per_record">Map every record (baseline, highest cost)</option>
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600" title="Reuse saved field decisions and verified recipes only. Makes no Claude request.">
+              <input type="checkbox" checked={strict && mode === "per_field"} disabled={mode !== "per_field"} onChange={(e) => setStrict(e.target.checked)} /> no-LLM run
+            </label>
             {!compact && (
               <label className="flex items-center gap-1.5 text-xs text-slate-600">
                 <input type="checkbox" checked={useExamples} onChange={(e) => setUseExamples(e.target.checked)} /> include approved mapping examples as context
@@ -48,7 +52,7 @@ export default function RunPanel({ compact = false }: { compact?: boolean }) {
       {(startError || err) && <div className="mb-3"><ErrorBox>{startError ?? err}</ErrorBox></div>}
       {shownRun?.status === "completed" && (
         <p className="mb-3 text-xs text-slate-500">
-          <b>{shownRun.llm_requests}</b> Claude request(s) for <b>{shownRun.total_records}</b> records · tokens in/out {shownRun.input_tokens.toLocaleString()} / {shownRun.output_tokens.toLocaleString()} · mode: {shownRun.mapping_mode ?? "per_record"}
+          <b>{shownRun.llm_requests}</b> Claude request(s) for <b>{shownRun.total_records}</b> records · tokens in/out {shownRun.input_tokens.toLocaleString()} / {shownRun.output_tokens.toLocaleString()}{shownRun.cache_read_tokens + shownRun.cache_write_tokens > 0 ? ` · prompt cache: ${shownRun.cache_read_tokens.toLocaleString()} read / ${shownRun.cache_write_tokens.toLocaleString()} written` : ""} · mode: {shownRun.mapping_mode ?? "per_record"}{shownRun.strict_no_llm ? " (no-LLM)" : ""}
         </p>
       )}
       {steps ? <Pipeline steps={steps} run={shownRun} /> : <p className="text-sm text-slate-400">No run yet. Load crawler data, then run the mapping. Steps below reflect real backend job status.</p>}

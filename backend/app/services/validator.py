@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .errors import MappingError
+from .recipes import RecipeError, validate_recipe
 
 
 class ResponseValidationError(Exception):
@@ -152,25 +153,31 @@ def validate_response(parsed: Any, record: dict, schema_fields: dict, thresholds
                 errors.append(f"'{sf}': target_field '{tf}' is not in the canonical schema")
                 invalid_field = True
                 continue
-            if expected == "mapped" and (tf is None or not usable(it.get("target_value"))):
-                errors.append(f"'{sf}': a mapped entry needs a target_field and a non-empty target_value")
+            if expected == "mapped" and tf is None:
+                errors.append(f"'{sf}': a mapped entry needs a target_field")
                 continue
             if expected == "unmapped":
                 tf = None
+            raw_value = source_value_str(record[sf])  # the raw value is authoritative; Claude is no longer asked to echo it
+            claimed = it.get("target_value")
+            # target_value null on a mapped entry means "the source value is used unchanged"
+            value = (claimed if usable(claimed) else raw_value.strip()) if expected == "mapped" else None
+            crawler_ok = expected == "mapped" and "crawler" in schema_fields[tf]["source_priority"]  # from the schema, not from Claude
             rows.append({
                 "source_field": sf,
-                "source_value": source_value_str(record[sf]),  # raw value is authoritative
+                "source_value": raw_value,
                 "target_field": tf,
-                "target_value": it.get("target_value") if expected == "mapped" else None,
-                "llm_target_value": it.get("target_value") if expected == "mapped" else None,
-                "llm_etl_can_populate": bool(it.get("etl_can_populate")) and expected == "mapped",
+                "target_value": value,
+                "llm_target_value": value,
+                "llm_etl_can_populate": crawler_ok,
+                "llm_recipe": _clean_recipe(it.get("recipe")) if expected == "mapped" else None,
                 "origin": "llm",
                 "confidence": float(conf),
                 "status": expected,
                 "llm_status": expected,
                 "reason": str(it.get("reason") or ""),
                 "owner": schema_fields[tf]["owner"] if tf else None,
-                "etl_can_populate": bool(it.get("etl_can_populate")) and expected == "mapped",
+                "etl_can_populate": crawler_ok,
                 "validation_note": None,
             })
 
@@ -212,6 +219,15 @@ def _demote(row: dict, note: str) -> None:
     row["target_value"] = None
     row["etl_can_populate"] = False
     row["validation_note"] = note
+
+
+def _clean_recipe(raw):
+    if not raw:
+        return None
+    try:
+        return validate_recipe(raw)
+    except RecipeError:
+        return None  # an unusable recipe is ignored; the value then falls back to the non-recipe path
 
 
 def require_rows(rows: list[dict]) -> None:

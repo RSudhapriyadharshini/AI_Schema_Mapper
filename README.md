@@ -33,6 +33,9 @@ Copy `.env.example` to `.env` in the project root and set:
 | `ANTHROPIC_EFFORT` | optional, default `medium` (blank to omit; needed for models without effort support) |
 | `ANTHROPIC_NORMALIZE_MODEL` | optional, model for the small value-derivation requests (defaults to `ANTHROPIC_MODEL`) |
 | `FIELD_CHUNK` | optional, distinct fields decided per request in per_field mode, default 60 (lower it if a response is cut off) |
+| `APPLY_BATCH_SIZE` | optional, records mapped and written per batch, default 2000 |
+| `RAW_COPY_LIMIT` | optional, runs up to this size copy raw JSON into `source_records`, default 2000 |
+| `SMALL_MODE_LIMIT` | optional, max records for the per_source / per_record modes, default 5000 |
 | `MAPPER_CONCURRENCY` | optional, parallel Claude calls, default 4 |
 | `LLM_TIMEOUT_SECONDS` | optional, default 180 |
 
@@ -109,9 +112,18 @@ before snapshots existed cannot be displayed; start a new run or delete `backend
 
 ## Input handling
 
-* Records are stored exactly as uploaded (`source_records.raw_json`). Nothing is overwritten.
+* Upload `.json` (array of records), `.jsonl` / `.ndjson` (one record per line) or `.csv`. Files are **streamed**: they are read in chunks and
+  stored record by record, so file size is limited by disk, not memory. A JSON file that is one big `{"records": [...]}` object is read whole (up to 100 MB).
+* Records are stored exactly as uploaded (`upload_records`). Nothing is overwritten.
+* While streaming, the app builds a bounded summary of the source: each distinct field path, how many records have it, and up to five
+  sample values (`upload_fields`). That summary, not the records, is what Claude is shown.
 * For mapping, each record is **flattened**: nested objects become dotted paths (`location_info.town`,
   `record.agentname`); lists stay whole (work history, social links and licenses are understood as units).
+* **Crawler metadata is dropped early.** Bookkeeping blocks (`crawler_meta`, `_meta`, `extraction_meta`, `pipeline_info`, `run_info`, ...) hold run
+  ids, timestamps and extractor names that never map to profile fields. They are removed from the *mapping input* (so they are never sent to Claude and
+  never create mapping rows) but stay in the stored raw record. Matching is on the name of a whole **block**, never a single field, so `crawled_from`
+  (a profile URL) is kept. The Source Data page lists what was ignored. Set `DROP_METADATA_BLOCKS=0` to turn it off or
+  `EXTRA_METADATA_BLOCKS=name1,name2` to add exact block names. See `is_metadata_block` in `services/parser.py`.
 * Placeholder values that mean "no data" (`""`, `-`, `N/A`, `unknown`, `null`, ...; list in `config.PLACEHOLDER_VALUES`) are ignored
   for mapping and counted on the Source Data page. This is data cleaning, not a decision about what a field means.
 
@@ -140,11 +152,66 @@ uses its own field names (like `sample_data/real_sample_data.json`, 675 distinct
 `per_source` saves nothing there. The saving then comes from saved decisions on later runs of the same source. The run panel shows the
 Claude requests and tokens each run used, so compare modes on your own file.
 
+## Cheaper requests
+
+* **Slim answers.** Claude is no longer asked to echo the source value, the owner or the ETL flag: the code already knows them (raw data, schema owner,
+  `source_priority`). `target_value` is `null` when the value is used unchanged (only trimmed); it is given only when the value is transformed.
+  Reasons are one short sentence. In your real run about 30% of the answer text was those echoes.
+* **Prompt caching.** Every mapping request starts with the same system prompt and schema block, which is marked for caching
+  (`cache_control`); everything that varies (approved examples, the fields, the context records) comes after it. The Mapping Logs tab shows
+  cache read / written tokens per request and the run panel shows the totals, so you can confirm it works: the first request writes the cache and later
+  ones read it. If the cached part is below the model's minimum size or more than 5 minutes pass between requests, nothing is cached (you will see 0).
+
+## Recipes and no-LLM runs
+
+When Claude decides that a field maps to a schema field and the value has to be reshaped (a comma-separated string into a list,
+"12+ years" into 12, a list of jobs into `positions`, the Facebook entry of a list of social links into `facebook_link`), it also returns a
+**recipe**: a short list of steps from a small closed vocabulary (`split_list`, `first_number`, `find_in_list`, `map_objects`, ...; see
+`services/recipes.py`). Claude writes the recipe once; ordinary code runs it on every record.
+
+A recipe is trusted only if it **reproduces Claude's own answer for the sample value**. Each saved decision is one of:
+
+| Kind | Applied by |
+|---|---|
+| copy (value already fits the target type) | plain code |
+| transform with a verified recipe | plain code (recipe) |
+| transform without a verified recipe | Claude, in batched requests (skipped in a no-LLM run) |
+
+**No-LLM run** (checkbox on the run panel, `strict_no_llm` in the API): reuse the saved decisions and verified recipes of a source and make
+**zero Claude requests**. It does not even need an API key. Fields the source has never shown are left unmapped, with a reason; values that
+need Claude and have no verified recipe stay empty, with a note on the mapping row. Nothing is guessed. The Saved field decisions card
+shows, per source, how many decisions have verified recipes and how many still need Claude.
+
+## Scale
+
+Designed so memory depends on the *batch size* and the *number of distinct fields*, not on the number of records:
+
+1. **Ingest** streams the file into SQLite in batches (`INGEST_BATCH_SIZE`).
+2. **Decide**: Claude decides only the distinct fields that have no saved decision, up to `FIELD_CHUNK` per request. 200,000 records from one
+   template cost the same number of field-decision requests as 30.
+3. **Apply**: records are read back in batches (`APPLY_BATCH_SIZE`, default 2,000), mapped with plain code, and written batch by batch.
+4. **Coverage and counts** are SQL aggregates over the stored rows, not Python loops.
+5. **Failure**: partial results of a run that fails are deleted, so only complete runs leave mapping results behind. Raw records are kept.
+6. **API and UI** are paged (mappings, canonical profiles, a grouped review queue). "Apply to all N records" on a review card updates every
+   affected record and the saved decision.
+7. Runs above `RAW_COPY_LIMIT` (2,000) records reference the stored upload instead of copying raw JSON into `source_records`.
+   `per_source` / `per_record` modes keep all records in memory and are limited to `SMALL_MODE_LIMIT` (5,000).
+
+Measure it on your machine (Claude is replaced by a small stub, so this tests the pipeline, not mapping quality):
+
+```bash
+cd backend && .venv/bin/python scripts/scale_check.py 20000
+```
+
+What is still prototype-grade: SQLite (one writer), the job runs in the API process (a restart fails the run; it does not resume), and about one
+mapping row per source field per record is stored, which is large at millions of records. The next steps for production are Postgres, a job
+queue with checkpoints, and storing only exceptions per record.
+
 ## How coverage is calculated
 
 * **Field coverage** = canonical fields with a usable value in ≥ 1 profile ÷ all canonical fields.
-* **ETL coverage** = ETL-owned fields populated from the crawler (Claude: `etl_can_populate`) ÷ ETL-owned fields.
-  `etl_can_populate` means the mapping is valid and the crawler is an accepted source per the field's `source_priority`.
+* **ETL coverage** = ETL-owned fields populated from the crawler (`etl_can_populate`) ÷ ETL-owned fields.
+  `etl_can_populate` is computed in code: the mapping is valid and the crawler is listed in the field's `source_priority` in the schema.
 * **Profile completeness** = mean over profiles of (fields with usable values ÷ all canonical fields). Required-only completeness is shown too.
 * Ownership breakdown, missing fields (with owner-based recommended action) and reverse mapping are computed from the stored mappings.
 
@@ -153,10 +220,11 @@ Claude requests and tokens each run used, so compare modes on your own file.
 ```
 backend/app/{main.py, config.py}
 backend/app/api/{upload,mapping,records,schema}.py
-backend/app/services/{parser,llm_mapper,validator,coverage,pipeline,sources,database,errors}.py
+backend/app/services/{parser,llm_mapper,validator,coverage,pipeline,sources,recipes,uploads,database,errors}.py
+backend/scripts/scale_check.py
 backend/app/prompts/{schema_mapping,normalize_values}.txt
 backend/app/schemas/{canonical_schema,mapping_response}.json
-backend/tests/test_pipeline.py, test_modes.py  # offline tests using a STUB Claude client (test-only)
+backend/tests/test_pipeline.py, test_modes.py, test_scale.py, test_slim.py  # offline tests using a STUB Claude client (test-only)
 frontend/src/{App.tsx, pages/, components/, services/api.ts}
 sample_data/{real_sample_data.json (loaded by the sample button), approved_examples_seed.json, older small samples}
 ```

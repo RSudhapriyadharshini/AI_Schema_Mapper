@@ -50,6 +50,9 @@ export default function SourceData() {
             <Stat label="Records" value={upload.num_records} />
             <Stat label="Unique source fields" value={upload.num_fields} sub={`nested fields as dotted paths · ${upload.fields_extracted} values · ${upload.dropped_empty} empty/placeholder values ignored`} />
           </div>
+          {upload.metadata_ignored > 0 && (
+            <p className="text-xs text-slate-500">Crawler metadata ignored for mapping (kept in the raw records): <b>{upload.metadata_ignored.toLocaleString()}</b> values in {Object.entries(upload.metadata_blocks).map(([k, n]) => `${k} ×${n}`).join(", ")}</p>
+          )}
           <p className="text-xs text-slate-500">Source name: <b>{upload.source_name}</b> · Crawler version: <b>{upload.crawler_version}</b> · Extraction prompt version: <b>{upload.extraction_prompt_version}</b></p>
           <RunPanel />
 
@@ -59,7 +62,7 @@ export default function SourceData() {
             </div>
           </Card>
 
-          <Card title="Raw records">
+          <Card title={`Raw records (showing the first ${upload.records_shown} of ${upload.num_records.toLocaleString()})`}>
             <Table head={["#", "Fields", "Preview", ""]}>
               {upload.records.map((r, i) => (
                 <Fragment key={i}>

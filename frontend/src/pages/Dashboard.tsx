@@ -8,16 +8,9 @@ const FLOW = ["Source websites / APIs", "AI crawler / ETL", "Raw extracted data"
 export default function Dashboard() {
   const { runId, run, version } = useApp();
   const cov = useAsync(() => (runId && run?.status === "completed" ? api.coverage(runId) : Promise.resolve(null)), [runId, run?.status, version]);
-  const maps = useAsync(() => (runId && run?.status === "completed" ? api.mappings(runId) : Promise.resolve(null)), [runId, run?.status, version]);
   const m = cov.data?.metrics;
 
-  const flows = new Map<string, { source: string; target: string; owner: string | null; n: number; conf: number }>();
-  maps.data?.mappings.filter((x) => x.status === "mapped").forEach((x) => {
-    const k = `${x.source_field}→${x.target_field}`;
-    const cur = flows.get(k) ?? { source: x.source_field, target: x.target_field!, owner: x.owner, n: 0, conf: 0 };
-    cur.n += 1; cur.conf += x.confidence; flows.set(k, cur);
-  });
-  const flowList = [...flows.values()].sort((a, b) => b.n - a.n).slice(0, 14);
+  const flowList = cov.data?.top_mappings ?? [];
 
   return (
     <>
@@ -59,16 +52,16 @@ export default function Dashboard() {
           <Card title="Field mapping (decided by the LLM)">
             <div className="divide-y divide-slate-100 text-sm">
               {flowList.map((f) => (
-                <div key={f.source + f.target} className="flex items-center gap-2 py-1.5">
-                  <code className="w-40 shrink-0 truncate text-slate-700">{f.source}</code>
+                <div key={f.source_field + f.target_field} className="flex items-center gap-2 py-1.5">
+                  <code className="w-40 shrink-0 truncate text-slate-700">{f.source_field}</code>
                   <span className="text-slate-300">→</span>
-                  <code className="min-w-0 flex-1 truncate text-indigo-700">{f.target}</code>
-                  <span className="w-12 text-right tabular-nums text-slate-500">{pct(f.conf / f.n)}</span>
-                  <span className="w-28 text-right"><OwnerBadge owner={f.owner as never} /></span>
+                  <code className="min-w-0 flex-1 truncate text-indigo-700">{f.target_field}</code>
+                  <span className="w-12 text-right tabular-nums text-slate-500">{pct(f.confidence)}</span>
+                  <span className="w-28 text-right"><OwnerBadge owner={f.owner} /></span>
                 </div>
               ))}
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">Confidence is LLM-reported (mean across records), not a calibrated probability.</p>
+            <p className="mt-2 text-[11px] text-slate-400">Most frequent mappings. Confidence is LLM-reported (mean), not a calibrated probability.</p>
           </Card>
           <div className="space-y-5">
             <Card title="Missing fields">

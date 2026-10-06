@@ -506,6 +506,58 @@
    "group": "company"
   },
   {
+   "field": "company_social_links.twitter",
+   "label": "Company Twitter",
+   "description": "URL of the company's Twitter page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.youtube",
+   "label": "Company YouTube",
+   "description": "URL of the company's YouTube channel.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.yelp",
+   "label": "Company Yelp",
+   "description": "URL of the company's Yelp page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
+   "field": "company_social_links.google_my_business",
+   "label": "Company Google My Business",
+   "description": "URL of the company's Google My Business page.",
+   "data_type": "url",
+   "required": false,
+   "owner": "ETL",
+   "source_priority": [
+    "crawler",
+    "CRM"
+   ],
+   "group": "company"
+  },
+  {
    "field": "company_social_links.other",
    "label": "Company Other Social Links",
    "description": "Company profiles on any other social network (for example Twitter or Google My Business), as a list of entries with network and url.",

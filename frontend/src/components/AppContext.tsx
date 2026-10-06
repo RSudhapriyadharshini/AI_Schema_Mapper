@@ -15,7 +15,7 @@ interface Ctx {
   activeRun: Run | null;
   starting: boolean;
   startError: string | null;
-  startRun: (useExamples: boolean, mode: MappingMode) => Promise<void>;
+  startRun: (useExamples: boolean, mode: MappingMode, strict: boolean) => Promise<void>;
   version: number;
   bump: () => void;
 }
@@ -96,11 +96,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     void tick();
   }, [refreshRuns, bump]);
 
-  const startRun = async (useExamples: boolean, mode: MappingMode) => {
+  const startRun = async (useExamples: boolean, mode: MappingMode, strict: boolean) => {
     if (!upload) return;
     setStarting(true); setStartError(null);
     try {
-      const { run_id } = await api.startRun(upload.id, useExamples, mode);
+      const { run_id } = await api.startRun(upload.id, useExamples, mode, strict);
       setActiveSteps(null); setActiveRun(null);
       poll(run_id);
     } catch (e) {

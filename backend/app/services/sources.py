@@ -8,7 +8,8 @@ import hashlib
 import json
 
 from . import database as db
-from .validator import demote, finalize_mapped_row, is_copy, source_value_str, usable
+from .recipes import RecipeError, result_text, run_recipe
+from .validator import coerce_value, demote, finalize_mapped_row, is_copy, source_value_str, usable
 
 CHUNK = 20  # records per normalization request
 
@@ -65,28 +66,52 @@ def delete_saved(source_id: int) -> None:
         c.execute("DELETE FROM source_mappings WHERE id=?", (source_id,))
 
 
+def _recipe_reproduces(recipe: list[dict], raw: str, target_value, field: dict) -> bool:
+    """A recipe is trusted only if it turns the sample source value into the same typed value Claude produced."""
+    try:
+        got = coerce_value(result_text(run_recipe(recipe, raw)), field["data_type"], field.get("item_fields"))
+        want = coerce_value(target_value, field["data_type"], field.get("item_fields"))
+    except (RecipeError, ValueError):
+        return False
+    return got == want
+
+
 def decisions_from_rows(rows: list[dict], schema_fields: dict) -> list[dict]:
-    """Turn one record's validated Claude rows into reusable per-field decisions."""
+    """Turn one record's (or one field's) validated Claude rows into reusable decisions."""
     out = []
     for r in rows:
         mapped = r["llm_status"] == "mapped"
         tv = r.get("llm_target_value")
+        fld = schema_fields[r["target_field"]] if mapped and r["target_field"] else None
+        derived = bool(mapped and usable(tv) and not is_copy(r["source_value"], tv, fld))
+        recipe = r.get("llm_recipe") if derived else None
+        verified = bool(recipe and _recipe_reproduces(recipe, r["source_value"], tv, fld))
         out.append({
             "source_field": r["source_field"], "target_field": r["target_field"], "status": r["llm_status"],
             "confidence": r["confidence"], "reason": r["reason"], "owner": r["owner"],
             "etl_can_populate": bool(r.get("llm_etl_can_populate")),
-            # copy = the value passes through unchanged; derived = Claude had to transform it
-            "derived": bool(mapped and usable(tv) and not is_copy(r["source_value"], tv, schema_fields[r["target_field"]])),
+            # copy = the value passes through unchanged; derived = it must be transformed, by a verified recipe or by Claude
+            "derived": derived, "recipe": recipe, "recipe_verified": verified,
             "example_source_value": r["source_value"], "example_target_value": tv if mapped else None,
         })
     return out
 
 
-def derived_decisions(decisions: list[dict]) -> list[dict]:
-    return [d for d in decisions if d["status"] == "mapped" and d["derived"]]
+def llm_value_decisions(decisions: list[dict]) -> list[dict]:
+    """Decisions whose values still need Claude at apply time: transformed, and no verified recipe."""
+    return [d for d in decisions if d["status"] == "mapped" and d["derived"] and not d.get("recipe_verified")]
 
 
-def rows_from_decisions(decisions: list[dict], record: dict, schema_fields: dict, thresholds: dict, derived_values: dict) -> list[dict]:
+def decision_kinds(decisions: list[dict]) -> dict:
+    """How mapped decisions will be applied: plain copy, verified recipe, or Claude."""
+    mapped = [d for d in decisions if d["status"] == "mapped"]
+    recipe = sum(1 for d in mapped if d["derived"] and d.get("recipe_verified"))
+    llm = sum(1 for d in mapped if d["derived"] and not d.get("recipe_verified"))
+    return {"copy": len(mapped) - recipe - llm, "recipe": recipe, "llm": llm}
+
+
+def rows_from_decisions(decisions: list[dict], record: dict, schema_fields: dict, thresholds: dict, derived_values: dict,
+                        strict: bool = False) -> list[dict]:
     """Apply saved decisions to another record. derived_values: (source_field, target_field) -> value from Claude."""
     rows = []
     for d in decisions:
@@ -103,9 +128,20 @@ def rows_from_decisions(decisions: list[dict], record: dict, schema_fields: dict
             "review_state": "approved" if d.get("human_approved") else None,
         }
         if status == "mapped":
-            value = derived_values.get((sf, d["target_field"])) if d["derived"] else raw.strip()
+            note = "a value could not be derived for this record from the saved mapping"
+            if not d["derived"]:
+                value = raw.strip()
+            elif d.get("recipe_verified"):
+                try:
+                    value = result_text(run_recipe(d["recipe"], raw))
+                except RecipeError as e:
+                    value, note = None, f"the saved recipe could not be applied to this value ({e})"
+            elif strict:
+                value, note = None, "needs Claude to transform this value and no verified recipe exists (no-LLM run)"
+            else:
+                value = derived_values.get((sf, d["target_field"]))
             if not usable(value):
-                demote(row, "a value could not be derived for this record from the saved mapping")
+                demote(row, note)
             else:
                 row["target_value"] = str(value).strip()
                 finalize_mapped_row(row, schema_fields, thresholds, human_approved=bool(d.get("human_approved")))
@@ -128,41 +164,64 @@ def update_after_review(sig: str, source_field: str, old_target: str | None, act
 # In per_field mode Claude decides once per unique source field path (across all records of a source),
 # and each decision is saved under the source's name so later crawls of that source can reuse it.
 
-def field_index(flats: list[dict], max_samples: int = 5, max_chars: int = 1500) -> dict:
-    """path -> {"records": [idx...], "samples": [raw strings], "first_raw": str}. Samples come from different records."""
-    idx: dict = {}
-    for i, flat in enumerate(flats):
+class FieldIndexBuilder:
+    """Bounded summary of a source: per distinct field path, a record count, a few distinct sample values and
+    the ids of the records they came from. Memory depends on the number of distinct fields, not records."""
+
+    def __init__(self, max_samples: int = 5, max_chars: int = 1500):
+        self.idx: dict = {}
+        self.max_samples, self.max_chars = max_samples, max_chars
+
+    def add(self, i: int, flat: dict) -> None:
         for path, v in flat.items():
-            e = idx.setdefault(path, {"records": [], "samples": [], "first_raw": None})
-            e["records"].append(i)
+            e = self.idx.get(path)
+            if e is None:
+                e = self.idx[path] = {"count": 0, "samples": [], "first_raw": None, "examples": []}
+            e["count"] += 1
             raw = source_value_str(v)
             if e["first_raw"] is None:
                 e["first_raw"] = raw
-            if len(e["samples"]) < max_samples and raw[:max_chars] not in e["samples"]:
-                e["samples"].append(raw[:max_chars])
-    return idx
+            sample = raw[:self.max_chars]
+            if len(e["samples"]) < self.max_samples and sample not in e["samples"]:
+                e["samples"].append(sample)
+                e["examples"].append(i)
 
 
-def context_records(paths: list[str], flats: list[dict], index: dict, k: int = 2, max_chars: int = 300) -> list[dict]:
-    """Pick up to k whole records that cover the most of `paths`, so Claude can see neighbouring fields."""
+def pick_context(paths: list[str], index: dict, load_flat, k: int = 2, max_chars: int = 300) -> list[dict]:
+    """Pick up to k whole records covering the most of `paths`, so Claude can see neighbouring fields.
+    Candidates are only the few example records remembered per field; load_flat(i) fetches one flattened record."""
+    cand_ids = sorted({i for p in paths for i in index[p]["examples"]})[:300]
+    flats = {i: load_flat(i) for i in cand_ids}
+    wanted = set(paths)
     covered: set = set()
     chosen: list[int] = []
-    cand = sorted({i for p in paths for i in index[p]["records"]})
     for _ in range(k):
-        best = max(cand, key=lambda i: len((set(flats[i]) & set(paths)) - covered), default=None)
-        if best is None or best in chosen:
+        best = max((i for i in cand_ids if i not in chosen), key=lambda i: len((set(flats[i]) & wanted) - covered), default=None)
+        if best is None:
             break
         chosen.append(best)
-        covered |= set(flats[best]) & set(paths)
+        covered |= set(flats[best]) & wanted
     return [{"record_index": i, "record": {p: source_value_str(v)[:max_chars] for p, v in flats[i].items()}} for i in chosen]
 
 
-def get_field_decisions(source_name: str, schema_version: str, prompt_version: str) -> dict:
-    """path -> decisions, for saved decisions of this source that match the current schema and prompt version."""
+def get_field_decisions(source_name: str, schema_version: str, prompt_version: str | None = None) -> dict:
+    """path -> decisions, for saved decisions of this source that match the current schema version.
+
+    With a prompt_version, only decisions made with that prompt count (a normal run re-learns after a prompt change).
+    With None, decisions made under any prompt version count: a no-LLM run reuses what the source already has."""
+    sql, params = "SELECT * FROM field_decisions WHERE source_name=? AND schema_version=?", [source_name, schema_version]
+    if prompt_version is not None:
+        sql += " AND prompt_version=?"
+        params.append(prompt_version)
     with db.conn() as c:
-        rows = db.rows(c, "SELECT * FROM field_decisions WHERE source_name=? AND schema_version=? AND prompt_version=?",
-                       (source_name, schema_version, prompt_version))
-    return {r["path"]: json.loads(r["decisions_json"]) for r in rows}
+        rows = db.rows(c, sql, params)
+    return {r["path"]: {"decisions": json.loads(r["decisions_json"]), "prompt_version": r["prompt_version"]} for r in rows}
+
+
+def saved_sources(schema_version: str) -> list[dict]:
+    with db.conn() as c:
+        return db.rows(c, "SELECT source_name, COUNT(*) AS fields, GROUP_CONCAT(DISTINCT prompt_version) AS prompt_versions "
+                          "FROM field_decisions WHERE schema_version=? GROUP BY source_name ORDER BY source_name", (schema_version,))
 
 
 def save_field_decisions(source_name: str, by_path: dict, model: str, schema_version: str, prompt_version: str, run_id: int) -> None:

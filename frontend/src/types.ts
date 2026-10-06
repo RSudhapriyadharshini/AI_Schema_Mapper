@@ -10,7 +10,7 @@ export interface CanonicalSchema { schema_version: string; owners: Owner[]; fiel
 export interface Upload {
   id: number; file_name: string; format: string; num_records: number; num_fields: number;
   fields_extracted: number; dropped_empty: number; source_name: string; crawler_version: string; extraction_prompt_version: string;
-  records: Record<string, unknown>[]; fields: { field: string; records: number }[];
+  records: Record<string, unknown>[]; fields: { field: string; records: number }[]; records_shown: number; metadata_ignored: number; metadata_blocks: Record<string, number>;
 }
 
 export interface Run {
@@ -18,7 +18,8 @@ export interface Run {
   prompt_version: string; source_file: string; status: "running" | "completed" | "failed";
   records_processed: number; total_records: number; fields_mapped: number; fields_unmapped: number; fields_ambiguous: number;
   crawler_version: string; extraction_prompt_version: string; thresholds: Thresholds; error_type: string | null; error_message: string | null;
-  mapping_mode: string | null; llm_requests: number; input_tokens: number; output_tokens: number;
+  mapping_mode: string | null; strict_no_llm: number; llm_requests: number; input_tokens: number; output_tokens: number;
+  cache_read_tokens: number; cache_write_tokens: number;
 }
 export interface Step { step_key: string; label: string; status: "pending" | "running" | "done" | "failed"; detail: string | null }
 
@@ -37,6 +38,7 @@ export interface FieldCoverage {
 export interface Coverage {
   run: Run;
   metrics: Record<string, number>;
+  top_mappings: { source_field: string; target_field: string; owner: Owner | null; n: number; confidence: number }[];
   fields: FieldCoverage[];
   ownership: { owner: Owner; total: number; populated: number; missing: number }[];
   missing: { field: string; label: string; owner: Owner; required: boolean; reason: string; recommended_action: string }[];
@@ -52,12 +54,12 @@ export interface CanonicalRecord {
 export interface LlmCall {
   id: number; record_index: number; purpose: string | null; attempt: number; model: string; prompt_version: string; status: string;
   error: string | null; request_text: string; response_text: string | null; stop_reason: string | null;
-  input_tokens: number | null; output_tokens: number | null; latency_ms: number | null; created_at: string;
+  input_tokens: number | null; output_tokens: number | null; latency_ms: number | null; cache_read_tokens: number | null; cache_write_tokens: number | null; created_at: string;
 }
 export interface ApprovedExample { id: number; source_field: string; target_field: string; example_value: string | null }
 export interface Health { ok: boolean; api_key_configured: boolean; model: string; prompt_version: string }
 export interface SourceDecision {
-  source_field: string; target_field: string | null; status: string; confidence: number; derived: boolean; human_approved?: boolean;
+  source_field: string; target_field: string | null; status: string; confidence: number; derived: boolean; recipe?: unknown[] | null; recipe_verified?: boolean; human_approved?: boolean;
 }
 export interface SourceMapping {
   id: number; signature: string; fields: string[]; decisions: SourceDecision[]; model: string; schema_version: string;
@@ -65,3 +67,6 @@ export interface SourceMapping {
 }
 export type MappingMode = "per_field" | "per_field_relearn" | "per_source" | "per_source_relearn" | "per_record";
 export interface FieldDecision { id: number; source_name: string; path: string; decisions: SourceDecision[]; times_reused: number; model: string; created_run_id: number }
+export interface MappingPage { run: Run; mappings: Mapping[]; total: number; limit: number; offset: number }
+export interface ReviewQueue { run: Run; items: (Mapping & { affects: number })[]; total_decisions: number }
+export interface CanonicalPage { run: Run; records: CanonicalRecord[]; total: number; limit: number; offset: number }

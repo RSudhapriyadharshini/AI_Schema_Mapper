@@ -1,5 +1,5 @@
 import type {
-  ApprovedExample, CanonicalRecord, FieldDecision, MappingMode, SourceMapping, CanonicalSchema, Coverage, Health, LlmCall, Mapping, Run, Step, Thresholds, Upload,
+  ApprovedExample, CanonicalPage, FieldDecision, MappingMode, MappingPage, ReviewQueue, SourceMapping, CanonicalSchema, Coverage, Health, LlmCall, Run, Step, Thresholds, Upload,
 } from "../types";
 
 export class ApiError extends Error {
@@ -37,20 +37,25 @@ export const api = {
   loadSample: () => req<Upload>("/upload/sample", { method: "POST" }),
   getUpload: (id: number) => req<Upload>(`/uploads/${id}`),
   listUploads: () => req<{ id: number }[]>("/uploads"),
-  startRun: (upload_id: number, use_approved_examples: boolean, mapping_mode: MappingMode) =>
-    req<{ run_id: number }>("/runs", json("POST", { upload_id, use_approved_examples, mapping_mode })),
+  startRun: (upload_id: number, use_approved_examples: boolean, mapping_mode: MappingMode, strict_no_llm: boolean) =>
+    req<{ run_id: number }>("/runs", json("POST", { upload_id, use_approved_examples, mapping_mode, strict_no_llm })),
   fieldDecisions: () => req<FieldDecision[]>("/field-decisions"),
   forgetFieldDecisions: (source: string) => req<{ ok: boolean }>(`/field-decisions?source_name=${encodeURIComponent(source)}`, { method: "DELETE" }),
   sourceMappings: () => req<SourceMapping[]>("/source-mappings"),
   deleteSourceMapping: (id: number) => req<{ ok: boolean }>(`/source-mappings/${id}`, { method: "DELETE" }),
   runs: () => req<Run[]>("/runs"),
   runStatus: (id: number) => req<{ run: Run; steps: Step[] }>(`/runs/${id}/status`),
-  mappings: (id: number) => req<{ run: Run; mappings: Mapping[] }>(`/runs/${id}/mappings`),
-  canonical: (id: number) => req<{ run: Run; records: CanonicalRecord[] }>(`/runs/${id}/canonical`),
+  mappings: (id: number, o: { record?: number; status?: string; limit?: number; offset?: number } = {}) => {
+    const q = new URLSearchParams();
+    Object.entries(o).forEach(([k, v]) => v !== undefined && q.set(k, String(v)));
+    return req<MappingPage>(`/runs/${id}/mappings?${q}`);
+  },
+  reviewQueue: (id: number, includeUnmapped: boolean) => req<ReviewQueue>(`/runs/${id}/review-queue?include_unmapped=${includeUnmapped}`),
+  canonical: (id: number, limit = 30, offset = 0) => req<CanonicalPage>(`/runs/${id}/canonical?limit=${limit}&offset=${offset}`),
   coverage: (id: number) => req<Coverage>(`/runs/${id}/coverage`),
   logs: (id: number) => req<{ run: Run; calls: LlmCall[] }>(`/runs/${id}/logs`),
-  review: (mappingId: number, action: "approve" | "reject" | "skip", target_field?: string) =>
-    req<{ ok: boolean }>(`/mappings/${mappingId}/review`, json("POST", { action, target_field })),
+  review: (mappingId: number, action: "approve" | "reject" | "skip", target_field?: string, scope: "record" | "all" = "record") =>
+    req<{ ok: boolean; updated: number }>(`/mappings/${mappingId}/review`, json("POST", { action, target_field, scope })),
   examples: () => req<ApprovedExample[]>("/approved-examples"),
   seedExamples: () => req<ApprovedExample[]>("/approved-examples/seed", { method: "POST" }),
   deleteExample: (id: number) => req<{ ok: boolean }>(`/approved-examples/${id}`, { method: "DELETE" }),
